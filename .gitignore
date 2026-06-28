@@ -1,0 +1,13 @@
+# Keep persona data local — contains real conversation history
+personas/*.json
+
+# Never commit API keys
+.env
+*.env
+
+# Mac clutter
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
