@@ -1,31 +1,69 @@
 """
-CSV importer for AAO CRM.
+CSV importer for AAO CRM — Google Sheets export format (comma-separated).
 
 Usage:
   python importer.py --contacts contacts.csv
-  python importer.py --funders funders.csv
-  python importer.py --tasks tasks.csv
+  python importer.py --funders  funders.csv
+  python importer.py --tasks    tasks.csv
 
-Column mapping:
-  contacts.csv : Name, Organization, Role, Email, Phone, Warmth, Last Contact, Notes
-  funders.csv  : Organization, Type, Focus Areas, Program Officer, Ask Amount, Status, Deadline, Notes
-  tasks.csv    : Title, Due Date, Priority, Status, Notes
+Contacts columns used:
+  contact_id, name, organization, title, category,
+  relationship_strength (1=Strong,5=Weak), how_connected, email, key_ask,
+  date_last_contacted, next_step, next_step_due_date, network_context
+
+Funders columns used:
+  funder_id, name, type, category, geography, typical_grant ($),
+  contact_name, status, next_step_due_date, notes
+
+Tasks columns used:
+  task, due_date, status, linked_contact_id, linked_funder_id,
+  notes, goal_area, success_metric
 """
 
 import csv
+import json
+import re
 import argparse
-from datetime import date
+from datetime import datetime
+from pathlib import Path
 
 from models import init_db, get_session, Contact, Funder, Task
 
+BASE_DIR = Path(__file__).parent
+ID_MAP_FILE = BASE_DIR / 'import_id_map.json'
+
+# Common mojibake: UTF-8 em-dash and smart quotes read as cp1252
+_MOJIBAKE = [
+    ('‚Äî', '—'),  # ‚Äî → —
+    ('‚Äù', '”'),  # ‚Äù → "
+    ('‚Äú', '“'),  # ‚Äú → "
+    ('‚Äô', '’'),  # ‚Äô → '
+]
+
+
+def _fix(s):
+    if not s:
+        return s
+    for bad, good in _MOJIBAKE:
+        s = s.replace(bad, good)
+    return s.strip()
+
+
+def _normalize_key(s):
+    """Strip embedded newlines and trailing unit suffixes from CSV column headers."""
+    if not s:
+        return ''
+    s = s.split('\n')[0].strip()              # drop subtitle after newline
+    s = re.sub(r'\s*\([^)]*\)\s*$', '', s).strip()  # drop trailing (...)
+    return s
+
 
 def _parse_date(s):
-    if not s or not s.strip():
+    if not s:
         return None
     s = s.strip()
-    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%B %d, %Y'):
+    for fmt in ('%m/%d/%y', '%m/%d/%Y', '%Y-%m-%d', '%B %d, %Y'):
         try:
-            from datetime import datetime
             return datetime.strptime(s, fmt).date()
         except ValueError:
             pass
@@ -35,22 +73,78 @@ def _parse_date(s):
 def _parse_int(s):
     if not s:
         return None
-    cleaned = s.replace('$', '').replace(',', '').strip()
+    cleaned = re.sub(r'[^\d.]', '', s.strip())
     try:
-        return int(float(cleaned))
-    except (ValueError, AttributeError):
+        return int(float(cleaned)) if cleaned else None
+    except ValueError:
         return None
+
+
+def _warmth(s):
+    try:
+        v = int(s.strip())
+    except (ValueError, AttributeError, TypeError):
+        return 'cold'
+    if v <= 2:
+        return 'hot'
+    if v == 3:
+        return 'warm'
+    return 'cold'
+
+
+_CONTACT_CATEGORY = {
+    'policy/advocacy': 'advocacy',
+    'media/influencer': 'media',
+    'career/recruiter': 'other',
+    'dc network': 'dc_network',
+}
+
+_FUNDER_STATUS = {
+    'research': 'research',
+    'active': 'outreach',
+    'prospecting': 'identified',
+}
+
+_TASK_STATUS = {
+    'complete': 'done',
+    'not started': 'pending',
+    'in progress': 'pending',
+}
+
+
+def _concat_notes(*parts):
+    joined = ' | '.join(p for p in [_fix(p) for p in parts] if p)
+    return joined or None
+
+
+def _load_id_map():
+    if ID_MAP_FILE.exists():
+        return json.loads(ID_MAP_FILE.read_text())
+    return {'contacts': {}, 'funders': {}}
+
+
+def _save_id_map(id_map):
+    ID_MAP_FILE.write_text(json.dumps(id_map, indent=2))
+
+
+def _normalized_reader(f):
+    reader = csv.DictReader(f)
+    _ = reader.fieldnames  # trigger header parse
+    reader.fieldnames = [_normalize_key(k) if k else '' for k in (reader.fieldnames or [])]
+    return reader
 
 
 def import_contacts(filename):
     session = get_session()
-    created = updated = skipped = 0
+    id_map = _load_id_map()
+    created = updated = skipped = tasks_created = 0
+
     try:
-        with open(filename, newline='', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
+        with open(filename, newline='', encoding='utf-8-sig', errors='replace') as f:
+            reader = _normalized_reader(f)
             for row in reader:
-                name = (row.get('Name') or '').strip()
-                org = (row.get('Organization') or '').strip()
+                name = _fix(row.get('name'))
+                org = _fix(row.get('organization'))
                 if not name:
                     skipped += 1
                     continue
@@ -59,7 +153,6 @@ def import_contacts(filename):
                             .filter(Contact.name.ilike(name),
                                     Contact.organization.ilike(org) if org else True)
                             .first())
-
                 if existing:
                     c = existing
                     updated += 1
@@ -70,35 +163,78 @@ def import_contacts(filename):
 
                 c.name = name
                 c.organization = org or c.organization
-                c.title = (row.get('Role') or '').strip() or c.title
-                c.email = (row.get('Email') or '').strip() or c.email
-                c.phone = (row.get('Phone') or '').strip() or c.phone
-                warmth = (row.get('Warmth') or '').strip().lower()
-                if warmth in ('cold', 'warm', 'hot'):
-                    c.warmth = warmth
-                lcd = _parse_date(row.get('Last Contact'))
+                c.title = _fix(row.get('title')) or c.title
+                c.email = _fix(row.get('email')) or c.email
+
+                strength = (row.get('relationship_strength') or '').strip()
+                if strength:
+                    c.warmth = _warmth(strength)
+
+                raw_cat = (row.get('category') or '').strip().lower()
+                c.category = _CONTACT_CATEGORY.get(raw_cat, 'other')
+
+                lcd = _parse_date(row.get('date_last_contacted'))
                 if lcd:
                     c.last_contact_date = lcd
-                notes = (row.get('Notes') or '').strip()
+
+                notes = _concat_notes(
+                    row.get('network_context'),
+                    row.get('how_connected'),
+                    row.get('key_ask'),
+                )
                 if notes:
                     c.notes = notes
 
+                session.flush()
+
+                csv_id = (row.get('contact_id') or '').strip()
+                if csv_id:
+                    id_map['contacts'][csv_id] = c.id
+
+                # Create a pending task from next_step if present
+                next_step = _fix(row.get('next_step'))
+                if next_step:
+                    due = _parse_date(row.get('next_step_due_date'))
+                    existing_task = (session.query(Task)
+                                     .filter(Task.title == next_step,
+                                             Task.linked_contact_id == c.id)
+                                     .first())
+                    if not existing_task:
+                        t = Task(
+                            title=next_step,
+                            due_date=due,
+                            priority='medium',
+                            status='pending',
+                            linked_contact_id=c.id,
+                        )
+                        session.add(t)
+                        tasks_created += 1
+
         session.commit()
-        print(f'Contacts: {created} created, {updated} updated, {skipped} skipped.')
+        _save_id_map(id_map)
+        print(f'Contacts: {created} imported, {updated} updated, {skipped} skipped.')
+        if tasks_created:
+            print(f'Tasks (from next_step): {tasks_created} created.')
+
     except FileNotFoundError:
         print(f'File not found: {filename}')
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
 
 def import_funders(filename):
     session = get_session()
+    id_map = _load_id_map()
     created = updated = skipped = 0
+
     try:
-        with open(filename, newline='', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
+        with open(filename, newline='', encoding='utf-8-sig', errors='replace') as f:
+            reader = _normalized_reader(f)
             for row in reader:
-                org = (row.get('Organization') or '').strip()
+                org = _fix(row.get('name'))
                 if not org:
                     skipped += 1
                     continue
@@ -113,68 +249,123 @@ def import_funders(filename):
                     created += 1
 
                 fu.organization = org
-                ftype = (row.get('Type') or '').strip().lower()
-                if ftype in ('foundation', 'corporate', 'government', 'individual'):
-                    fu.type = ftype
-                fu.focus_areas = (row.get('Focus Areas') or '').strip() or fu.focus_areas
-                fu.program_officer_name = (row.get('Program Officer') or '').strip() or fu.program_officer_name
-                amt = _parse_int(row.get('Ask Amount'))
+
+                raw_type = (row.get('type') or '').strip().lower()
+                fu.type = {'foundation': 'foundation', 'corporate': 'corporate'}.get(raw_type, 'foundation')
+
+                fu.program_officer_name = _fix(row.get('contact_name')) or fu.program_officer_name
+
+                amt = _parse_int(row.get('typical_grant'))
                 if amt is not None:
                     fu.ask_amount = amt
-                status = (row.get('Status') or '').strip().lower().replace(' ', '_')
-                valid_statuses = ('research', 'identified', 'outreach', 'meeting_scheduled',
-                                  'proposal_submitted', 'funded', 'declined', 'dormant')
-                if status in valid_statuses:
-                    fu.status = status
-                dl = _parse_date(row.get('Deadline'))
+
+                raw_status = (row.get('status') or '').strip().lower()
+                fu.status = _FUNDER_STATUS.get(raw_status, 'research')
+
+                dl = _parse_date(row.get('next_step_due_date'))
                 if dl:
                     fu.deadline = dl
-                notes = (row.get('Notes') or '').strip()
+
+                notes = _concat_notes(
+                    row.get('notes'),
+                    row.get('category'),
+                    row.get('geography'),
+                )
                 if notes:
                     fu.notes = notes
 
+                session.flush()
+
+                csv_id = (row.get('funder_id') or '').strip()
+                if csv_id:
+                    id_map['funders'][csv_id] = fu.id
+
         session.commit()
-        print(f'Funders: {created} created, {updated} updated, {skipped} skipped.')
+        _save_id_map(id_map)
+        print(f'Funders: {created} imported, {updated} updated, {skipped} skipped.')
+
     except FileNotFoundError:
         print(f'File not found: {filename}')
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
 
 def import_tasks(filename):
     session = get_session()
-    created = skipped = 0
+    id_map = _load_id_map()
+    created = updated = skipped = 0
+
     try:
-        with open(filename, newline='', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
+        with open(filename, newline='', encoding='utf-8-sig', errors='replace') as f:
+            reader = _normalized_reader(f)
             for row in reader:
-                title = (row.get('Title') or '').strip()
+                title = _fix(row.get('task'))
                 if not title:
                     skipped += 1
                     continue
-                t = Task(
-                    title=title,
-                    due_date=_parse_date(row.get('Due Date')),
-                    priority=(row.get('Priority') or 'medium').strip().lower(),
-                    status=(row.get('Status') or 'pending').strip().lower(),
-                    description=(row.get('Notes') or '').strip() or None,
+
+                due = _parse_date(row.get('due_date'))
+                # due_date may contain status text like "Complete" — _parse_date returns None safely
+
+                raw_status = (row.get('status') or '').strip().lower()
+                status = _TASK_STATUS.get(raw_status, 'pending')
+
+                description = _concat_notes(
+                    row.get('notes'),
+                    row.get('goal_area'),
+                    row.get('success_metric'),
                 )
-                session.add(t)
-                created += 1
+
+                linked_contact_id = None
+                raw_cid = (row.get('linked_contact_id') or '').strip()
+                if raw_cid:
+                    linked_contact_id = id_map['contacts'].get(raw_cid)
+
+                linked_funder_id = None
+                raw_fid = (row.get('linked_funder_id') or '').strip()
+                if raw_fid:
+                    linked_funder_id = id_map['funders'].get(raw_fid)
+
+                existing = session.query(Task).filter(Task.title == title).first()
+                if existing:
+                    t = existing
+                    updated += 1
+                else:
+                    t = Task(title=title)
+                    session.add(t)
+                    created += 1
+
+                t.due_date = due
+                t.status = status
+                if description:
+                    t.description = description
+                if not t.priority:
+                    t.priority = 'medium'
+                if linked_contact_id:
+                    t.linked_contact_id = linked_contact_id
+                if linked_funder_id:
+                    t.linked_funder_id = linked_funder_id
 
         session.commit()
-        print(f'Tasks: {created} created, {skipped} skipped.')
+        print(f'Tasks: {created} imported, {updated} updated, {skipped} skipped.')
+
     except FileNotFoundError:
         print(f'File not found: {filename}')
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Import CSV data into AAO CRM')
-    parser.add_argument('--contacts', metavar='FILE', help='contacts CSV file')
-    parser.add_argument('--funders', metavar='FILE', help='funders CSV file')
-    parser.add_argument('--tasks', metavar='FILE', help='tasks CSV file')
+    parser.add_argument('--contacts', metavar='FILE', help='contacts CSV')
+    parser.add_argument('--funders', metavar='FILE', help='funders CSV')
+    parser.add_argument('--tasks', metavar='FILE', help='tasks CSV')
     args = parser.parse_args()
 
     if not any([args.contacts, args.funders, args.tasks]):
