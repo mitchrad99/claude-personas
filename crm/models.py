@@ -38,6 +38,10 @@ class Contact(Base):
     category = Column(String(20), default='other')    # advocacy, funder, government, media, peer_org, dc_network, other
     last_contact_date = Column(Date)
     notes = Column(Text)
+    last_email_date = Column(DateTime)
+    last_email_subject = Column(String(500))
+    last_email_direction = Column(String(10))   # 'inbound' or 'outbound'
+    last_synced_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -57,6 +61,10 @@ class Contact(Base):
             'category': self.category,
             'last_contact_date': self.last_contact_date.isoformat() if self.last_contact_date else None,
             'notes': self.notes,
+            'last_email_date': self.last_email_date.isoformat() if self.last_email_date else None,
+            'last_email_subject': self.last_email_subject,
+            'last_email_direction': self.last_email_direction,
+            'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
