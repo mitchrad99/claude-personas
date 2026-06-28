@@ -7,6 +7,9 @@ from sqlalchemy.orm import sessionmaker, relationship
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _db_default = f"sqlite:///{os.path.join(BASE_DIR, 'aao_crm.db')}"
 DATABASE_URL = os.environ.get('DATABASE_URL', _db_default)
+# Render (and legacy Heroku) inject postgres:// which SQLAlchemy 1.4+ rejects
+if DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
 _connect_args = {'check_same_thread': False} if DATABASE_URL.startswith('sqlite') else {}
 engine = create_engine(DATABASE_URL, connect_args=_connect_args)
