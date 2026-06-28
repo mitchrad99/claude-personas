@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>AAO CRM</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg2: #f4f6f8;
+      --bg3: #e8ecf0;
+      --text: #111827;
+      --text2: #6b7280;
+      --border: #d1d5db;
+      --accent: #166534;
+      --accent-light: #dcfce7;
+      --hot: #16a34a;
+      --hot-bg: #dcfce7;
+      --warm: #d97706;
+      --warm-bg: #fef3c7;
+      --cold: #6b7280;
+      --cold-bg: #f3f4f6;
+      --danger: #dc2626;
+      --danger-bg: #fee2e2;
+      --shadow: 0 1px 3px rgba(0,0,0,.1);
+      --radius: 8px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --bg2: #1e293b;
+        --bg3: #334155;
+        --text: #f1f5f9;
+        --text2: #94a3b8;
+        --border: #334155;
+        --accent: #4ade80;
+        --accent-light: #14532d;
+        --hot: #4ade80;
+        --hot-bg: #14532d;
+        --warm: #fbbf24;
+        --warm-bg: #451a03;
+        --cold: #94a3b8;
+        --cold-bg: #1e293b;
+        --danger: #f87171;
+        --danger-bg: #450a0a;
+        --shadow: 0 1px 3px rgba(0,0,0,.4);
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── header ── */
+    header {
+      background: var(--accent);
+      color: #fff;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: var(--shadow);
+    }
+    header h1 { font-size: 1.1rem; font-weight: 700; flex: 1; }
+    #summary-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+    .pill {
+      background: rgba(255,255,255,.2);
+      border-radius: 20px;
+      padding: 2px 8px;
+      font-size: .75rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .pill.red { background: rgba(220,38,38,.5); }
+
+    /* ── tabs ── */
+    nav {
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      overflow-x: auto;
+      scrollbar-width: none;
+      position: sticky;
+      top: 49px;
+      z-index: 90;
+    }
+    nav::-webkit-scrollbar { display: none; }
+    .tab-btn {
+      padding: 10px 14px;
+      font-size: .85rem;
+      font-weight: 600;
+      color: var(--text2);
+      border: none;
+      background: none;
+      cursor: pointer;
+      white-space: nowrap;
+      border-bottom: 3px solid transparent;
+      transition: color .15s, border-color .15s;
+    }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    /* ── main content ── */
+    main { flex: 1; overflow: hidden; }
+    .tab-pane { display: none; height: calc(100dvh - 97px); overflow-y: auto; }
+    .tab-pane.active { display: flex; flex-direction: column; }
+
+    /* ── chat ── */
+    #pane-chat { padding: 0; }
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .msg {
+      max-width: 85%;
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      line-height: 1.5;
+      font-size: .9rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #fff;
+      border-bottom-right-radius: 2px;
+    }
+    .msg.assistant {
+      align-self: flex-start;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 2px;
+    }
+    .msg-meta { font-size: .7rem; color: var(--text2); margin-top: 4px; }
+    .msg.user .msg-meta { text-align: right; }
+    .msg-changes { font-size: .75rem; color: var(--text2); margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+
+    .chat-input-bar {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    #chat-input {
+      flex: 1;
+      resize: none;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: .9rem;
+      font-family: inherit;
+      background: var(--bg2);
+      color: var(--text);
+      min-height: 42px;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+    #chat-input:focus { outline: 2px solid var(--accent); }
+    #chat-send {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 10px 18px;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      height: 42px;
+      white-space: nowrap;
+    }
+    #chat-send:disabled { opacity: .5; cursor: default; }
+    .typing-indicator { color: var(--text2); font-size: .85rem; font-style: italic; padding: 4px 0; }
+
+    /* ── data panes ── */
+    .pane-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2);
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .pane-header h2 { font-size: .95rem; font-weight: 700; flex: 1; min-width: 80px; }
+    .filter-group { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .filter-label { font-size: .78rem; color: var(--text2); }
+
+    select, input[type=number], input[type=text], input[type=email], input[type=date], textarea.field {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: .82rem;
+      background: var(--bg);
+      color: var(--text);
+      font-family: inherit;
+    }
+    select:focus, input:focus, textarea.field:focus { outline: 2px solid var(--accent); }
+
+    .btn {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: none;
+      font-size: .82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s;
+    }
+    .btn:active { opacity: .75; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-sm { padding: 4px 10px; font-size: .78rem; }
+    .btn-danger { background: var(--danger); color: #fff; }
+
+    /* ── table ── */
+    .table-wrap { overflow-x: auto; flex: 1; }
+    table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+    thead th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: .78rem;
+      font-weight: 700;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+    }
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background .1s;
+      cursor: pointer;
+    }
+    tbody tr:hover { background: var(--bg2); }
+    tbody tr.expanded { background: var(--bg3); cursor: default; }
+    td { padding: 10px 12px; vertical-align: top; }
+    .empty-state { padding: 40px 16px; text-align: center; color: var(--text2); font-size: .9rem; }
+
+    /* ── badges ── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: .75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .badge-hot { background: var(--hot-bg); color: var(--hot); }
+    .badge-warm { background: var(--warm-bg); color: var(--warm); }
+    .badge-cold { background: var(--cold-bg); color: var(--cold); }
+    .badge-high { background: var(--danger-bg); color: var(--danger); }
+    .badge-medium { background: var(--warm-bg); color: var(--warm); }
+    .badge-low { background: var(--cold-bg); color: var(--cold); }
+    .badge-done { background: var(--accent-light); color: var(--hot); }
+    .overdue { color: var(--danger); font-weight: 600; }
+
+    /* ── expand row ── */
+    .expand-row td { padding: 0; }
+    .expand-content {
+      padding: 16px;
+      background: var(--bg3);
+      border-top: 1px solid var(--border);
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .form-field label { display: block; font-size: .75rem; font-weight: 600; color: var(--text2); margin-bottom: 4px; }
+    .form-field input, .form-field select, .form-field textarea.field {
+      width: 100%;
+    }
+    textarea.field { resize: vertical; min-height: 60px; }
+    .form-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+    /* ── modal ── */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.5);
+      z-index: 200;
+      align-items: flex-end;
+      justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    @media (min-width: 600px) {
+      .modal-backdrop { align-items: center; }
+    }
+    .modal {
+      background: var(--bg);
+      border-radius: var(--radius) var(--radius) 0 0;
+      width: 100%;
+      max-width: 540px;
+      max-height: 90dvh;
+      overflow-y: auto;
+      padding: 20px 16px;
+    }
+    @media (min-width: 600px) {
+      .modal { border-radius: var(--radius); }
+    }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .modal-header h3 { font-size: 1rem; font-weight: 700; }
+    .modal-close { background: none; border: none; font-size: 1.4rem; cursor: pointer; color: var(--text2); line-height: 1; }
+
+    /* ── loading ── */
+    .spinner {
+      width: 20px; height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>AAO CRM</h1>
+  <div id="summary-pills"></div>
+</header>
+
+<nav>
+  <button class="tab-btn active" data-tab="chat">Chat</button>
+  <button class="tab-btn" data-tab="contacts">Contacts</button>
+  <button class="tab-btn" data-tab="funders">Funders</button>
+  <button class="tab-btn" data-tab="tasks">Tasks</button>
+  <button class="tab-btn" data-tab="dc-orgs">DC Orgs</button>
+  <button class="tab-btn" data-tab="opportunities">Opportunities</button>
+</nav>
+
+<main>
+
+  <!-- CHAT -->
+  <div id="pane-chat" class="tab-pane active">
+    <div class="chat-messages" id="chat-messages">
+      <div class="msg assistant">
+        Hi Mitch. Describe a meeting, ask about your contacts or tasks, or ask me to draft an email.
+        <div class="msg-meta">Now</div>
+      </div>
+    </div>
+    <div class="chat-input-bar">
+      <textarea id="chat-input" placeholder="Describe a meeting or ask anything…" rows="1"></textarea>
+      <button id="chat-send" class="btn btn-primary">Send</button>
+    </div>
+  </div>
+
+  <!-- CONTACTS -->
+  <div id="pane-contacts" class="tab-pane">
+    <div class="pane-header">
+      <h2>Contacts</h2>
+      <div class="filter-group">
+        <span class="filter-label">Warmth:</span>
+        <select id="filter-warmth">
+          <option value="">All</option>
+          <option value="hot">Hot</option>
+          <option value="warm">Warm</option>
+          <option value="cold">Cold</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Category:</span>
+        <select id="filter-category">
+          <option value="">All</option>
+          <option value="advocacy">Advocacy</option>
+          <option value="funder">Funder</option>
+          <option value="government">Government</option>
+          <option value="media">Media</option>
+          <option value="peer_org">Peer Org</option>
+          <option value="dc_network">DC Network</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Stale &gt;</span>
+        <input type="number" id="filter-stale" placeholder="days" style="width:64px">
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openModal('contact')">+ Add</button>
+    </div>
+    <div class="table-wrap">
+      <table id="contacts-table">
+        <thead><tr>
+          <th>Name</th>
+          <th>Org</th>
+          <th>Warmth</th>
+          <th>Last Contact</th>
+          <th>Next Task</th>
+        </tr></thead>
+        <tbody id="contacts-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- FUNDERS -->
+  <div id="pane-funders" class="tab-pane">
+    <div class="pane-header">
+      <h2>Funders</h2>
+      <div class="filter-group">
+        <span class="filter-label">Status:</span>
+        <select id="filter-funder-status">
+          <option value="">All</option>
+          <option value="research">Research</option>
+          <option value="identified">Identified</option>
+          <option value="outreach">Outreach</option>
+          <option value="meeting_scheduled">Meeting Scheduled</option>
+          <option value="proposal_submitted">Proposal Submitted</option>
+          <option value="funded">Funded</option>
+          <option value="declined">Declined</option>
+          <option value="dormant">Dormant</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openModal('funder')">+ Add</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Organization</th>
+          <th>Type</th>
+          <th>Ask</th>
+          <th>Status</th>
+          <th>Deadline</th>
+          <th>Program Officer</th>
+        </tr></thead>
+        <tbody id="funders-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TASKS -->
+  <div id="pane-tasks" class="tab-pane">
+    <div class="pane-header">
+      <h2>Tasks</h2>
+      <div class="filter-group">
+        <span class="filter-label">Status:</span>
+        <select id="filter-task-status">
+          <option value="pending">Pending</option>
+          <option value="done">Done</option>
+          <option value="">All</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openModal('task')">+ Add</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th style="width:36px"></th>
+          <th>Task</th>
+          <th>Due Date</th>
+          <th>Priority</th>
+          <th>Linked To</th>
+        </tr></thead>
+        <tbody id="tasks-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- DC ORGS -->
+  <div id="pane-dc-orgs" class="tab-pane">
+    <div class="pane-header">
+      <h2>DC Orgs</h2>
+      <button class="btn btn-primary btn-sm" onclick="openModal('dc_org')">+ Add</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Org</th>
+          <th>Type</th>
+          <th>Priority</th>
+          <th>Key Contact</th>
+          <th>Notes</th>
+        </tr></thead>
+        <tbody id="dc-orgs-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- OPPORTUNITIES -->
+  <div id="pane-opportunities" class="tab-pane">
+    <div class="pane-header">
+      <h2>Opportunities</h2>
+      <button class="btn btn-primary btn-sm" onclick="openModal('opportunity')">+ Add</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Role</th>
+          <th>Org</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Deadline</th>
+        </tr></thead>
+        <tbody id="opportunities-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<!-- MODAL -->
+<div class="modal-backdrop" id="modal-backdrop" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <h3 id="modal-title">Add</h3>
+      <button class="modal-close" onclick="closeModal()">×</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<script>
+// ── state ────────────────────────────────────────────────────────────────────
+const today = new Date().toISOString().slice(0, 10);
+
+// ── tabs ─────────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    const pane = document.getElementById('pane-' + btn.dataset.tab);
+    pane.classList.add('active');
+    loadTab(btn.dataset.tab);
+  });
+});
+
+function loadTab(tab) {
+  if (tab === 'contacts') loadContacts();
+  if (tab === 'funders') loadFunders();
+  if (tab === 'tasks') loadTasks();
+  if (tab === 'dc-orgs') loadDCOrgs();
+  if (tab === 'opportunities') loadOpportunities();
+}
+
+// ── api helpers ───────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+  return res.json();
+}
+
+// ── summary pills ─────────────────────────────────────────────────────────────
+async function loadSummary() {
+  try {
+    const s = await api('GET', '/api/summary');
+    const pills = document.getElementById('summary-pills');
+    const items = [
+      { label: `${s.tasks_due_this_week} due this week`, red: false },
+      { label: `${s.overdue_tasks} overdue`, red: s.overdue_tasks > 0 },
+      { label: `${s.hot_contacts} hot`, red: false },
+    ];
+    pills.innerHTML = items.map(i =>
+      `<span class="pill${i.red ? ' red' : ''}">${i.label}</span>`
+    ).join('');
+  } catch(e) {}
+}
+loadSummary();
+
+// ── chat ──────────────────────────────────────────────────────────────────────
+const chatInput = document.getElementById('chat-input');
+const chatSend = document.getElementById('chat-send');
+const chatMessages = document.getElementById('chat-messages');
+
+chatInput.addEventListener('input', () => {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 140) + 'px';
+});
+chatInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+chatSend.addEventListener('click', sendChat);
+
+function fmt(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function appendMsg(role, text, changes) {
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.textContent = text;
+  const meta = document.createElement('div');
+  meta.className = 'msg-meta';
+  meta.textContent = fmt(new Date().toISOString());
+  div.appendChild(meta);
+  if (changes && changes.length) {
+    const ch = document.createElement('div');
+    ch.className = 'msg-changes';
+    ch.textContent = '↳ ' + changes.map(c => `${c.action} ${c.type}: ${c.name || c.title || c.org || ''}`).join(' · ');
+    div.appendChild(ch);
+  }
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+async function sendChat() {
+  const msg = chatInput.value.trim();
+  if (!msg) return;
+  chatInput.value = '';
+  chatInput.style.height = 'auto';
+  chatSend.disabled = true;
+  appendMsg('user', msg);
+
+  const typing = document.createElement('div');
+  typing.className = 'typing-indicator';
+  typing.textContent = 'Thinking…';
+  chatMessages.appendChild(typing);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+
+  try {
+    const data = await api('POST', '/api/chat', { message: msg });
+    typing.remove();
+    appendMsg('assistant', data.response, data.changes);
+    if (data.changes && data.changes.length) {
+      loadSummary();
+      const active = document.querySelector('.tab-btn.active');
+      if (active) loadTab(active.dataset.tab);
+    }
+  } catch(e) {
+    typing.remove();
+    appendMsg('assistant', 'Error: ' + e.message);
+  }
+  chatSend.disabled = false;
+  chatInput.focus();
+}
+
+// ── contacts ──────────────────────────────────────────────────────────────────
+let contactsData = [];
+
+document.getElementById('filter-warmth').addEventListener('change', loadContacts);
+document.getElementById('filter-category').addEventListener('change', loadContacts);
+document.getElementById('filter-stale').addEventListener('change', loadContacts);
+
+async function loadContacts() {
+  const params = new URLSearchParams();
+  const w = document.getElementById('filter-warmth').value;
+  const c = document.getElementById('filter-category').value;
+  const s = document.getElementById('filter-stale').value;
+  if (w) params.set('warmth', w);
+  if (c) params.set('category', c);
+  if (s) params.set('stale_days', s);
+  const tbody = document.getElementById('contacts-body');
+  try {
+    contactsData = await api('GET', '/api/contacts?' + params);
+    renderContacts(tbody, contactsData);
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">Error loading contacts</td></tr>`;
+  }
+}
+
+function renderContacts(tbody, data) {
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No contacts found</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = data.map(c => `
+    <tr data-id="${c.id}" onclick="toggleContactExpand(this, ${c.id})">
+      <td><strong>${esc(c.name)}</strong></td>
+      <td>${esc(c.organization || '—')}</td>
+      <td><span class="badge badge-${c.warmth}">${c.warmth}</span></td>
+      <td>${c.last_contact_date ? fmtDate(c.last_contact_date) : '<span style="color:var(--text2)">Never</span>'}</td>
+      <td>${c.next_task ? `${esc(c.next_task)}${c.next_task_due ? ' <small>(' + fmtDate(c.next_task_due) + ')</small>' : ''}` : '—'}</td>
+    </tr>
+  `).join('');
+}
+
+function toggleContactExpand(row, id) {
+  const existing = row.nextElementSibling;
+  if (existing && existing.classList.contains('expand-row')) {
+    existing.remove();
+    row.classList.remove('expanded');
+    return;
+  }
+  document.querySelectorAll('.expand-row').forEach(r => r.remove());
+  document.querySelectorAll('tr.expanded').forEach(r => r.classList.remove('expanded'));
+  row.classList.add('expanded');
+
+  const c = contactsData.find(x => x.id === id);
+  if (!c) return;
+
+  const tr = document.createElement('tr');
+  tr.className = 'expand-row';
+  tr.innerHTML = `<td colspan="5">
+    <div class="expand-content">
+      <div class="form-grid">
+        <div class="form-field"><label>Name</label><input id="ec-name" value="${esc(c.name)}"></div>
+        <div class="form-field"><label>Organization</label><input id="ec-org" value="${esc(c.organization||'')}"></div>
+        <div class="form-field"><label>Title</label><input id="ec-title" value="${esc(c.title||'')}"></div>
+        <div class="form-field"><label>Email</label><input type="email" id="ec-email" value="${esc(c.email||'')}"></div>
+        <div class="form-field"><label>Phone</label><input id="ec-phone" value="${esc(c.phone||'')}"></div>
+        <div class="form-field"><label>Warmth</label>
+          <select id="ec-warmth">
+            <option value="cold" ${c.warmth==='cold'?'selected':''}>Cold</option>
+            <option value="warm" ${c.warmth==='warm'?'selected':''}>Warm</option>
+            <option value="hot" ${c.warmth==='hot'?'selected':''}>Hot</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Category</label>
+          <select id="ec-category">
+            ${['advocacy','funder','government','media','peer_org','dc_network','other'].map(v =>
+              `<option value="${v}" ${c.category===v?'selected':''}>${v}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="form-field"><label>Last Contact</label><input type="date" id="ec-lcd" value="${c.last_contact_date||''}"></div>
+      </div>
+      <div class="form-field" style="margin-bottom:10px">
+        <label>Notes</label>
+        <textarea class="field" id="ec-notes" style="width:100%">${esc(c.notes||'')}</textarea>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary btn-sm" onclick="saveContact(${id})">Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="this.closest('.expand-row').previousElementSibling.click()">Cancel</button>
+      </div>
+    </div>
+  </td>`;
+  row.after(tr);
+}
+
+async function saveContact(id) {
+  try {
+    await api('PUT', `/api/contacts/${id}`, {
+      name: document.getElementById('ec-name').value,
+      organization: document.getElementById('ec-org').value,
+      title: document.getElementById('ec-title').value,
+      email: document.getElementById('ec-email').value,
+      phone: document.getElementById('ec-phone').value,
+      warmth: document.getElementById('ec-warmth').value,
+      category: document.getElementById('ec-category').value,
+      last_contact_date: document.getElementById('ec-lcd').value || null,
+      notes: document.getElementById('ec-notes').value,
+    });
+    loadContacts();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── funders ───────────────────────────────────────────────────────────────────
+document.getElementById('filter-funder-status').addEventListener('change', loadFunders);
+
+async function loadFunders() {
+  const params = new URLSearchParams();
+  const s = document.getElementById('filter-funder-status').value;
+  if (s) params.set('status', s);
+  const tbody = document.getElementById('funders-body');
+  try {
+    const data = await api('GET', '/api/funders?' + params);
+    if (!data.length) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-state">No funders found</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = data.map(f => `
+      <tr>
+        <td><strong>${esc(f.organization)}</strong>${f.notes ? `<br><small style="color:var(--text2)">${esc(f.notes.slice(0,60))}${f.notes.length>60?'…':''}</small>` : ''}</td>
+        <td>${f.type || '—'}</td>
+        <td>${f.ask_amount ? '$' + f.ask_amount.toLocaleString() : '—'}</td>
+        <td><span class="badge badge-${statusColor(f.status)}">${f.status.replace('_',' ')}</span></td>
+        <td>${f.deadline ? fmtDate(f.deadline) : '—'}</td>
+        <td>${esc(f.program_officer_name || '—')}</td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">Error loading funders</td></tr>`;
+  }
+}
+
+function statusColor(s) {
+  if (['funded'].includes(s)) return 'hot';
+  if (['outreach','meeting_scheduled','proposal_submitted'].includes(s)) return 'warm';
+  return 'cold';
+}
+
+// ── tasks ─────────────────────────────────────────────────────────────────────
+document.getElementById('filter-task-status').addEventListener('change', loadTasks);
+
+async function loadTasks() {
+  const params = new URLSearchParams();
+  const s = document.getElementById('filter-task-status').value;
+  if (s) params.set('status', s);
+  const tbody = document.getElementById('tasks-body');
+  try {
+    const data = await api('GET', '/api/tasks?' + params);
+    if (!data.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No tasks found</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = data.map(t => {
+      const overdue = t.due_date && t.due_date < today && t.status === 'pending';
+      return `
+        <tr>
+          <td><input type="checkbox" ${t.status==='done'?'checked':''} onchange="toggleTask(${t.id}, this.checked)" onclick="event.stopPropagation()"></td>
+          <td class="${overdue?'overdue':''}">${esc(t.title)}${t.description?`<br><small style="color:var(--text2)">${esc(t.description)}</small>`:''}</td>
+          <td class="${overdue?'overdue':''}">${t.due_date ? fmtDate(t.due_date) : '—'}</td>
+          <td><span class="badge badge-${t.priority}">${t.priority}</span></td>
+          <td>${esc(t.contact_name || t.funder_name || '—')}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">Error loading tasks</td></tr>`;
+  }
+}
+
+async function toggleTask(id, done) {
+  try {
+    await api('PUT', `/api/tasks/${id}`, { status: done ? 'done' : 'pending' });
+    loadTasks();
+    loadSummary();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── dc orgs ───────────────────────────────────────────────────────────────────
+async function loadDCOrgs() {
+  const tbody = document.getElementById('dc-orgs-body');
+  try {
+    const data = await api('GET', '/api/dc_orgs');
+    if (!data.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No DC orgs yet</td></tr>`;
+      return;
+    }
+    // sort: high → medium → low
+    const order = {high:0, medium:1, low:2};
+    data.sort((a,b) => (order[a.priority]||1) - (order[b.priority]||1));
+    tbody.innerHTML = data.map(o => `
+      <tr>
+        <td><strong>${esc(o.name)}</strong></td>
+        <td>${o.type ? o.type.replace('_',' ') : '—'}</td>
+        <td><span class="badge badge-${o.priority}">${o.priority}</span></td>
+        <td>${esc(o.key_contact_name || '—')}</td>
+        <td><small>${esc(o.notes || '—')}</small></td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">Error loading DC orgs</td></tr>`;
+  }
+}
+
+// ── opportunities ─────────────────────────────────────────────────────────────
+async function loadOpportunities() {
+  const tbody = document.getElementById('opportunities-body');
+  try {
+    const data = await api('GET', '/api/opportunities');
+    if (!data.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No opportunities yet</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = data.map(o => `
+      <tr>
+        <td><strong>${esc(o.title)}</strong></td>
+        <td>${esc(o.organization || '—')}</td>
+        <td>${o.type || '—'}</td>
+        <td><span class="badge badge-${oppColor(o.status)}">${o.status}</span></td>
+        <td>${o.deadline ? fmtDate(o.deadline) : '—'}</td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">Error loading opportunities</td></tr>`;
+  }
+}
+
+function oppColor(s) {
+  if (s === 'offer') return 'hot';
+  if (['applied','interviewing'].includes(s)) return 'warm';
+  return 'cold';
+}
+
+// ── modal ─────────────────────────────────────────────────────────────────────
+const modalForms = {
+  contact: {
+    title: 'Add Contact',
+    fields: `
+      <div class="form-grid">
+        <div class="form-field"><label>Name *</label><input id="mf-name" required></div>
+        <div class="form-field"><label>Organization</label><input id="mf-org"></div>
+        <div class="form-field"><label>Title</label><input id="mf-title"></div>
+        <div class="form-field"><label>Email</label><input type="email" id="mf-email"></div>
+        <div class="form-field"><label>Phone</label><input id="mf-phone"></div>
+        <div class="form-field"><label>Warmth</label>
+          <select id="mf-warmth">
+            <option value="cold">Cold</option>
+            <option value="warm">Warm</option>
+            <option value="hot">Hot</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Category</label>
+          <select id="mf-category">
+            <option value="advocacy">Advocacy</option>
+            <option value="funder">Funder</option>
+            <option value="government">Government</option>
+            <option value="media">Media</option>
+            <option value="peer_org">Peer Org</option>
+            <option value="dc_network">DC Network</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Last Contact</label><input type="date" id="mf-lcd"></div>
+      </div>
+      <div class="form-field" style="margin-bottom:12px"><label>Notes</label><textarea class="field" id="mf-notes" style="width:100%"></textarea></div>
+    `,
+    submit: async () => {
+      await api('POST', '/api/contacts', {
+        name: document.getElementById('mf-name').value,
+        organization: document.getElementById('mf-org').value,
+        title: document.getElementById('mf-title').value,
+        email: document.getElementById('mf-email').value,
+        phone: document.getElementById('mf-phone').value,
+        warmth: document.getElementById('mf-warmth').value,
+        category: document.getElementById('mf-category').value,
+        last_contact_date: document.getElementById('mf-lcd').value || null,
+        notes: document.getElementById('mf-notes').value,
+      });
+      closeModal();
+      loadContacts();
+    }
+  },
+  funder: {
+    title: 'Add Funder',
+    fields: `
+      <div class="form-grid">
+        <div class="form-field"><label>Organization *</label><input id="mf-org" required></div>
+        <div class="form-field"><label>Type</label>
+          <select id="mf-type">
+            <option value="">—</option>
+            <option value="foundation">Foundation</option>
+            <option value="corporate">Corporate</option>
+            <option value="government">Government</option>
+            <option value="individual">Individual</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Ask Amount ($)</label><input type="number" id="mf-ask"></div>
+        <div class="form-field"><label>Status</label>
+          <select id="mf-status">
+            <option value="research">Research</option>
+            <option value="identified">Identified</option>
+            <option value="outreach">Outreach</option>
+            <option value="meeting_scheduled">Meeting Scheduled</option>
+            <option value="proposal_submitted">Proposal Submitted</option>
+            <option value="funded">Funded</option>
+            <option value="declined">Declined</option>
+            <option value="dormant">Dormant</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Program Officer</label><input id="mf-po"></div>
+        <div class="form-field"><label>Deadline</label><input type="date" id="mf-deadline"></div>
+      </div>
+      <div class="form-field" style="margin-bottom:12px"><label>Focus Areas</label><input id="mf-focus" style="width:100%"></div>
+      <div class="form-field" style="margin-bottom:12px"><label>Notes</label><textarea class="field" id="mf-notes" style="width:100%"></textarea></div>
+    `,
+    submit: async () => {
+      await api('POST', '/api/funders', {
+        organization: document.getElementById('mf-org').value,
+        type: document.getElementById('mf-type').value || null,
+        ask_amount: document.getElementById('mf-ask').value ? parseInt(document.getElementById('mf-ask').value) : null,
+        status: document.getElementById('mf-status').value,
+        program_officer_name: document.getElementById('mf-po').value,
+        deadline: document.getElementById('mf-deadline').value || null,
+        focus_areas: document.getElementById('mf-focus').value,
+        notes: document.getElementById('mf-notes').value,
+      });
+      closeModal();
+      loadFunders();
+    }
+  },
+  task: {
+    title: 'Add Task',
+    fields: `
+      <div class="form-grid">
+        <div class="form-field" style="grid-column:1/-1"><label>Title *</label><input id="mf-title" required style="width:100%"></div>
+        <div class="form-field"><label>Due Date</label><input type="date" id="mf-due"></div>
+        <div class="form-field"><label>Priority</label>
+          <select id="mf-priority">
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field" style="margin-bottom:12px"><label>Description</label><textarea class="field" id="mf-desc" style="width:100%"></textarea></div>
+    `,
+    submit: async () => {
+      await api('POST', '/api/tasks', {
+        title: document.getElementById('mf-title').value,
+        due_date: document.getElementById('mf-due').value || null,
+        priority: document.getElementById('mf-priority').value,
+        description: document.getElementById('mf-desc').value,
+      });
+      closeModal();
+      loadTasks();
+    }
+  },
+  dc_org: {
+    title: 'Add DC Org',
+    fields: `
+      <div class="form-grid">
+        <div class="form-field"><label>Name *</label><input id="mf-name" required></div>
+        <div class="form-field"><label>Type</label>
+          <select id="mf-type">
+            <option value="">—</option>
+            <option value="think_tank">Think Tank</option>
+            <option value="advocacy">Advocacy</option>
+            <option value="congressional">Congressional</option>
+            <option value="agency">Agency</option>
+            <option value="coalition">Coalition</option>
+            <option value="media">Media</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Priority</label>
+          <select id="mf-priority">
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field" style="margin-bottom:12px"><label>Notes</label><textarea class="field" id="mf-notes" style="width:100%"></textarea></div>
+    `,
+    submit: async () => {
+      await api('POST', '/api/dc_orgs', {
+        name: document.getElementById('mf-name').value,
+        type: document.getElementById('mf-type').value || null,
+        priority: document.getElementById('mf-priority').value,
+        notes: document.getElementById('mf-notes').value,
+      });
+      closeModal();
+      loadDCOrgs();
+    }
+  },
+  opportunity: {
+    title: 'Add Opportunity',
+    fields: `
+      <div class="form-grid">
+        <div class="form-field"><label>Title *</label><input id="mf-title" required></div>
+        <div class="form-field"><label>Organization</label><input id="mf-org"></div>
+        <div class="form-field"><label>Type</label>
+          <select id="mf-type">
+            <option value="">—</option>
+            <option value="job">Job</option>
+            <option value="fellowship">Fellowship</option>
+            <option value="board">Board</option>
+            <option value="consulting">Consulting</option>
+            <option value="speaking">Speaking</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Status</label>
+          <select id="mf-status">
+            <option value="identified">Identified</option>
+            <option value="applied">Applied</option>
+            <option value="interviewing">Interviewing</option>
+            <option value="offer">Offer</option>
+            <option value="declined">Declined</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+        <div class="form-field"><label>Deadline</label><input type="date" id="mf-deadline"></div>
+        <div class="form-field"><label>Salary Range</label><input id="mf-salary"></div>
+      </div>
+      <div class="form-field" style="margin-bottom:12px"><label>Notes</label><textarea class="field" id="mf-notes" style="width:100%"></textarea></div>
+    `,
+    submit: async () => {
+      await api('POST', '/api/opportunities', {
+        title: document.getElementById('mf-title').value,
+        organization: document.getElementById('mf-org').value,
+        type: document.getElementById('mf-type').value || null,
+        status: document.getElementById('mf-status').value,
+        deadline: document.getElementById('mf-deadline').value || null,
+        salary_range: document.getElementById('mf-salary').value,
+        notes: document.getElementById('mf-notes').value,
+      });
+      closeModal();
+      loadOpportunities();
+    }
+  },
+};
+
+let currentModalType = null;
+
+function openModal(type) {
+  const form = modalForms[type];
+  currentModalType = type;
+  document.getElementById('modal-title').textContent = form.title;
+  document.getElementById('modal-body').innerHTML = form.fields + `
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick="submitModal()">Save</button>
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+    </div>
+  `;
+  document.getElementById('modal-backdrop').classList.add('open');
+  const first = document.querySelector('#modal input, #modal select, #modal textarea');
+  if (first) setTimeout(() => first.focus(), 50);
+}
+
+function closeModal(e) {
+  if (e && e.target !== document.getElementById('modal-backdrop')) return;
+  document.getElementById('modal-backdrop').classList.remove('open');
+  currentModalType = null;
+}
+
+async function submitModal() {
+  if (!currentModalType) return;
+  const req = document.querySelector('#modal input[required], #modal select[required]');
+  if (req && !req.value.trim()) { req.focus(); return; }
+  try {
+    await modalForms[currentModalType].submit();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// close on Escape
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ── utils ─────────────────────────────────────────────────────────────────────
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const [y,m,d] = iso.split('-');
+  return `${m}/${d}/${y.slice(2)}`;
+}
+</script>
+</body>
+</html>

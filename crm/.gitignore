@@ -1,0 +1,5 @@
+aao_crm.db
+chat_history.json
+__pycache__/
+*.pyc
+.env
