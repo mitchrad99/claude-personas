@@ -274,6 +274,14 @@
     .badge-done { background: var(--accent-light); color: var(--hot); }
     .overdue { color: var(--danger); font-weight: 600; }
 
+    /* ── email status labels ── */
+    .status-reply    { color: var(--danger); font-weight: 600; font-size: .8rem; }
+    .status-followup { color: var(--warm);   font-weight: 600; font-size: .8rem; }
+    .status-active   { color: var(--hot);    font-weight: 600; font-size: .8rem; }
+    .status-none     { color: var(--text2);  font-size: .8rem; }
+    .email-brief     { white-space: nowrap; }
+    @media (max-width: 640px) { .hide-sm { display: none; } }
+
     /* ── expand row ── */
     .expand-row td { padding: 0; }
     .expand-content {
@@ -398,16 +406,24 @@
         <span class="filter-label">Stale &gt;</span>
         <input type="number" id="filter-stale" placeholder="days" style="width:64px">
       </div>
+      <div class="filter-group">
+        <span class="filter-label">Sort:</span>
+        <select id="sort-contacts">
+          <option value="name">Name A–Z</option>
+          <option value="attention">Needs attention</option>
+        </select>
+      </div>
       <button class="btn btn-primary btn-sm" onclick="openModal('contact')">+ Add</button>
     </div>
     <div class="table-wrap">
       <table id="contacts-table">
         <thead><tr>
           <th>Name</th>
-          <th>Org</th>
-          <th>Warmth</th>
-          <th>Last Contact</th>
-          <th>Next Task</th>
+          <th class="hide-sm">Org</th>
+          <th class="hide-sm">Warmth</th>
+          <th>Last Email</th>
+          <th>Status</th>
+          <th class="hide-sm">Next Task</th>
         </tr></thead>
         <tbody id="contacts-body"></tbody>
       </table>
@@ -654,6 +670,9 @@ let contactsData = [];
 document.getElementById('filter-warmth').addEventListener('change', loadContacts);
 document.getElementById('filter-category').addEventListener('change', loadContacts);
 document.getElementById('filter-stale').addEventListener('change', loadContacts);
+document.getElementById('sort-contacts').addEventListener('change', () =>
+  renderContacts(document.getElementById('contacts-body'), contactsData)
+);
 
 async function loadContacts() {
   const params = new URLSearchParams();
@@ -668,24 +687,36 @@ async function loadContacts() {
     contactsData = await api('GET', '/api/contacts?' + params);
     renderContacts(tbody, contactsData);
   } catch(e) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">Error loading contacts</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">Error loading contacts</td></tr>`;
   }
 }
 
 function renderContacts(tbody, data) {
   if (!data.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-state">No contacts found</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">No contacts found</td></tr>`;
     return;
   }
-  tbody.innerHTML = data.map(c => `
+  const sortVal = document.getElementById('sort-contacts').value;
+  let sorted = [...data];
+  if (sortVal === 'attention') {
+    sorted.sort((a, b) => {
+      const sa = emailStatus(a), sb = emailStatus(b);
+      if (sa.sort !== sb.sort) return sa.sort - sb.sort;
+      return (sb.days || 0) - (sa.days || 0);   // oldest first within same tier
+    });
+  }
+  tbody.innerHTML = sorted.map(c => {
+    const st = emailStatus(c);
+    return `
     <tr data-id="${c.id}" onclick="toggleContactExpand(this, ${c.id})">
       <td><strong>${esc(c.name)}</strong></td>
-      <td>${esc(c.organization || '—')}</td>
-      <td><span class="badge badge-${c.warmth}">${c.warmth}</span></td>
-      <td>${c.last_contact_date ? fmtDate(c.last_contact_date) : '<span style="color:var(--text2)">Never</span>'}</td>
-      <td>${c.next_task ? `${esc(c.next_task)}${c.next_task_due ? ' <small>(' + fmtDate(c.next_task_due) + ')</small>' : ''}` : '—'}</td>
-    </tr>
-  `).join('');
+      <td class="hide-sm">${esc(c.organization || '—')}</td>
+      <td class="hide-sm"><span class="badge badge-${c.warmth}">${c.warmth}</span></td>
+      <td>${emailCellHtml(c)}</td>
+      <td><span class="${st.cls}">${st.label}</span></td>
+      <td class="hide-sm">${c.next_task ? `${esc(c.next_task)}${c.next_task_due ? ' <small>(' + fmtDate(c.next_task_due) + ')</small>' : ''}` : '—'}</td>
+    </tr>`;
+  }).join('');
 }
 
 function toggleContactExpand(row, id) {
@@ -704,7 +735,7 @@ function toggleContactExpand(row, id) {
 
   const tr = document.createElement('tr');
   tr.className = 'expand-row';
-  tr.innerHTML = `<td colspan="5">
+  tr.innerHTML = `<td colspan="6">
     <div class="expand-content">
       <div class="form-grid">
         <div class="form-field"><label>Name</label><input id="ec-name" value="${esc(c.name)}"></div>
@@ -1139,6 +1170,35 @@ function fmtDate(iso) {
   if (!iso) return '—';
   const [y,m,d] = iso.split('-');
   return `${m}/${d}/${y.slice(2)}`;
+}
+
+// ── email sync helpers ────────────────────────────────────────────────────────
+function daysAgo(isoStr) {
+  if (!isoStr) return null;
+  // Python stores naive UTC datetimes; append Z so JS parses as UTC
+  const s = /[Z+]/.test(isoStr) ? isoStr : isoStr + 'Z';
+  return Math.max(0, Math.floor((Date.now() - new Date(s).getTime()) / 86400000));
+}
+
+function emailStatus(c) {
+  if (!c.last_email_date) return { label: 'No activity', cls: 'status-none', sort: 3, days: null };
+  const days = daysAgo(c.last_email_date);
+  if (days <= 3)                                          return { label: 'Active',        cls: 'status-active',   sort: 2, days };
+  if (c.last_email_direction === 'inbound')               return { label: 'Reply needed',  cls: 'status-reply',    sort: 0, days };
+  if (c.last_email_direction === 'outbound' && days > 7)  return { label: 'Follow up',     cls: 'status-followup', sort: 1, days };
+  return { label: 'Active', cls: 'status-active', sort: 2, days };
+}
+
+function emailCellHtml(c) {
+  if (!c.last_email_date) return '<span style="color:var(--text2)">—</span>';
+  const days = daysAgo(c.last_email_date);
+  const dir  = c.last_email_direction === 'outbound' ? 'out' : 'in';
+  const age  = days === 0 ? 'today' : days === 1 ? '1d ago' : `${days}d ago`;
+  const subj = c.last_email_subject
+    ? esc(c.last_email_subject.slice(0, 40)) + (c.last_email_subject.length > 40 ? '…' : '')
+    : '';
+  return `<span class="email-brief">${dir} · ${age}</span>`
+    + (subj ? `<span class="email-subj hide-sm"> · ${subj}</span>` : '');
 }
 </script>
 </body>
