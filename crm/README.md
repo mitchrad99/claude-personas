@@ -24,7 +24,7 @@ A personal relationship management tool for Mitch Radakovich, board chair of [Al
 ```
 crm/
 ├── app.py                   # Flask routes and all API endpoints
-├── models.py                # SQLAlchemy ORM — 6 tables, dual SQLite/Postgres support
+├── models.py                # SQLAlchemy ORM — 9 tables, dual SQLite/Postgres support
 ├── chat.py                  # Claude Sonnet chat engine with CRM tool use
 ├── gmail_sync.py            # Updates contact email fields from Gmail (scheduled)
 ├── inbox_scan.py            # AI-powered inbox scan for unknown senders (scheduled)
@@ -35,7 +35,11 @@ crm/
 ├── runtime.txt              # python-3.11.0
 ├── migrations/
 │   ├── add_email_sync_fields.sql      # Adds last_email_* columns to contacts
-│   └── add_inbox_recommendations.sql  # Creates inbox_recommendations table
+│   ├── add_inbox_recommendations.sql  # Creates inbox_recommendations table
+│   ├── add_task_category.sql          # Adds category column to tasks
+│   ├── add_interactions.sql           # Creates interactions table
+│   ├── add_contact_notes.sql          # Creates contact_notes table
+│   └── add_contact_relationships.sql  # Creates contact_relationships table
 └── templates/
     └── index.html           # Single-page app (~1200 lines, vanilla JS, no framework)
 ```
@@ -99,6 +103,7 @@ Follow-up actions. Can be linked to a contact, a funder, both, or neither.
 | `due_date` | date | |
 | `priority` | string(10) | `low` \| `medium` \| `high` |
 | `status` | string(10) | `pending` \| `done` |
+| `category` | string(30) | `outreach` \| `intro_followup` \| `fundraising` \| `policy` \| `admin` \| `career` \| `sabbatical_prep` |
 | `linked_contact_id` | integer FK → contacts.id | Optional |
 | `linked_funder_id` | integer FK → funders.id | Optional |
 | `created_at` / `updated_at` | datetime | |
@@ -151,6 +156,53 @@ AI-generated suggestions from inbox_scan.py. Each row represents an unknown send
 | `status` | string(20) | `pending` \| `accepted` \| `dismissed` |
 | `created_at` | datetime | |
 
+### `interactions`
+
+Touchpoint log for contact meetings, calls, events, etc. Written by the chat engine during debriefs.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | |
+| `contact_id` | integer FK → contacts.id NOT NULL | |
+| `date` | date NOT NULL | Date of the interaction |
+| `type` | string(20) | `meeting` \| `call` \| `event` \| `coffee` \| `text` \| `linkedin` |
+| `location` | string(255) | Where it happened (optional) |
+| `notes` | text | What was discussed, outcomes, impressions |
+| `follow_up_needed` | boolean | Default false |
+| `created_at` / `updated_at` | datetime | |
+
+Indexed on `contact_id` and `date`.
+
+### `contact_notes`
+
+Append-only timestamped notes per contact. No `updated_at` — rows are never modified after insert.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | |
+| `contact_id` | integer FK → contacts.id NOT NULL | |
+| `note` | text NOT NULL | The note content |
+| `source` | string(20) | `manual` \| `chat_debrief` \| `ai_generated` — default `manual` |
+| `created_at` | datetime | |
+
+Indexed on `contact_id`.
+
+### `contact_relationships`
+
+Social graph edges between contacts. Tracks introductions made, promised, or pending.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | |
+| `from_contact_id` | integer FK → contacts.id NOT NULL | The contact who initiated or made the intro |
+| `to_contact_id` | integer FK → contacts.id NOT NULL | The contact who was introduced or connected to |
+| `type` | string(30) | `introduced_by` \| `wants_to_connect` \| `peer` \| `mentor` \| `referred_funder` |
+| `status` | string(20) | `completed` \| `pending` — default `completed` |
+| `notes` | text | Context about the relationship or intro |
+| `created_at` / `updated_at` | datetime | |
+
+Constraints: `CHECK (from_contact_id != to_contact_id)` and `UNIQUE (from_contact_id, to_contact_id, type)`. Indexed on both FK columns.
+
 ---
 
 ## UI tabs
@@ -200,7 +252,9 @@ Natural-language interface to the CRM. Type a meeting debrief in plain English (
 
 The chat engine (`chat.py`) maintains a rolling history (last 20 turns) in `chat_history.json`. History beyond 20 turns is summarized in a stub message. The model is `claude-sonnet-4-6` with tool use.
 
-Available tools: `get_contacts`, `create_or_update_contact`, `create_task`, `get_tasks`, `create_or_update_funder`, `get_funders`, `get_dc_orgs`, `create_opportunity`, `draft_email`, `get_summary`.
+**Meeting debrief behavior:** When Mitch describes a meeting or call, the engine always calls `log_interaction` (to record the touchpoint) and `add_contact_note` (source=`chat_debrief`) in addition to updating the contact record. When Mitch mentions that someone introduced them to another person, the engine calls `log_relationship` with `type=introduced_by` and `status=completed`. When someone promises a future introduction, the engine calls `log_relationship` with `type=wants_to_connect` and `status=pending`, then also creates a follow-up task.
+
+Available tools (13): `get_contacts`, `create_or_update_contact`, `create_task`, `get_tasks`, `create_or_update_funder`, `get_funders`, `get_dc_orgs`, `create_opportunity`, `draft_email`, `get_summary`, `log_interaction`, `add_contact_note`, `log_relationship`.
 
 ### Inbox
 
@@ -288,6 +342,14 @@ All endpoints require HTTP Basic Auth. All responses are JSON.
 | GET | `/api/inbox` | List pending inbox recommendations |
 | POST | `/api/inbox/<id>/accept` | Accept recommendation → creates Contact or Task |
 | POST | `/api/inbox/<id>/dismiss` | Dismiss recommendation |
+| GET | `/api/interactions` | List interactions; filter by `?contact_id=`, `?type=`, `?follow_up_needed=` |
+| POST | `/api/interactions` | Create interaction (`contact_id` and `date` required) |
+| PUT | `/api/interactions/<id>` | Update interaction fields |
+| GET | `/api/contact_notes` | List notes for a contact (`contact_id` required) |
+| POST | `/api/contact_notes` | Append a note (`contact_id` and `note` required) |
+| GET | `/api/contact_relationships` | List relationship edges; filter by `?contact_id=` (matches either side), `?type=` |
+| POST | `/api/contact_relationships` | Create relationship (`from_contact_id` and `to_contact_id` required) |
+| PUT | `/api/contact_relationships/<id>` | Update relationship type, status, or notes |
 
 `GET /api/contacts` also annotates each contact with `next_task` (title of oldest pending task linked to that contact) and `next_task_due`.
 

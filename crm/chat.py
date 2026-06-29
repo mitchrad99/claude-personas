@@ -5,7 +5,7 @@ from pathlib import Path
 
 import anthropic
 
-from models import get_session, Contact, Funder, Task, DCOrg, Opportunity
+from models import get_session, Contact, Funder, Task, DCOrg, Opportunity, Interaction, ContactNote, ContactRelationship
 
 HISTORY_FILE = Path(__file__).parent / 'chat_history.json'
 MAX_TURNS = 20   # number of recent turns to keep in context; older turns are summarized
@@ -21,6 +21,14 @@ SYSTEM_PROMPT = (
     "warmth signal, any dollar amounts (link to funders table), next steps (create tasks with "
     "specific due dates), key topics (add to notes). "
     "Always confirm what you've updated before offering to do more. "
+    "For every meeting or call debrief, always call log_interaction to create the touchpoint "
+    "record AND add_contact_note (source=chat_debrief) to capture key discussion points and "
+    "next steps as a persistent note on the contact. "
+    "When the user mentions that someone introduced them to another person, call log_relationship "
+    "with type=introduced_by and status=completed. "
+    "When the user mentions that someone offered or promised to make an introduction, call "
+    "log_relationship with type=wants_to_connect and status=pending, then also create a "
+    "follow-up task for Mitch to follow up on the pending connection. "
     "Tone: direct, efficient, like a great EA. No fluff."
 )
 
@@ -182,6 +190,60 @@ TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "log_interaction",
+        "description": (
+            "Record a touchpoint with a contact (meeting, call, event, etc.). "
+            "Always call this when Mitch debriefs a meeting or call, even if create_or_update_contact is also called."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "integer", "description": "ID of the contact involved"},
+                "date": {"type": "string", "description": "ISO date YYYY-MM-DD of the interaction"},
+                "type": {"type": "string", "enum": ["meeting", "call", "event", "coffee", "text", "linkedin"]},
+                "notes": {"type": "string", "description": "What was discussed, outcomes, impressions"},
+                "location": {"type": "string", "description": "Where it happened (optional)"},
+                "follow_up_needed": {"type": "boolean", "description": "True if Mitch needs to follow up"},
+            },
+            "required": ["contact_id", "date", "type", "notes"],
+        },
+    },
+    {
+        "name": "add_contact_note",
+        "description": (
+            "Append a timestamped note to a contact record. "
+            "Use source=chat_debrief when logging meeting summaries via the chat interface. "
+            "These notes are append-only and never overwrite existing notes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contact_id": {"type": "integer", "description": "ID of the contact"},
+                "note": {"type": "string", "description": "The note to append"},
+            },
+            "required": ["contact_id", "note"],
+        },
+    },
+    {
+        "name": "log_relationship",
+        "description": (
+            "Record a relationship edge between two contacts. "
+            "Use type=introduced_by + status=completed when someone made an introduction that already happened. "
+            "Use type=wants_to_connect + status=pending when someone offered or promised to make an introduction."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "from_contact_id": {"type": "integer", "description": "Contact who initiated or made the introduction"},
+                "to_contact_id": {"type": "integer", "description": "Contact who was introduced or connected to"},
+                "type": {"type": "string", "enum": ["introduced_by", "wants_to_connect", "peer", "mentor", "referred_funder"]},
+                "status": {"type": "string", "enum": ["completed", "pending"]},
+                "notes": {"type": "string", "description": "Context about the relationship or introduction"},
+            },
+            "required": ["from_contact_id", "to_contact_id", "type", "status"],
+        },
+    },
 ]
 
 
@@ -285,6 +347,9 @@ class ChatEngine:
             'create_opportunity': self._create_opportunity,
             'draft_email': self._draft_email,
             'get_summary': self._get_summary,
+            'log_interaction': self._log_interaction,
+            'add_contact_note': self._add_contact_note,
+            'log_relationship': self._log_relationship,
         }
         handler = handlers.get(name)
         if not handler:
@@ -542,5 +607,57 @@ class ChatEngine:
                     'hot_funders': len(hot_funders),
                 },
             }
+        finally:
+            session.close()
+
+    def _log_interaction(self, inp):
+        session = get_session()
+        try:
+            i = Interaction(
+                contact_id=inp['contact_id'],
+                date=date.fromisoformat(inp['date']),
+                type=inp['type'],
+                notes=inp['notes'],
+                location=inp.get('location'),
+                follow_up_needed=inp.get('follow_up_needed', False),
+            )
+            session.add(i)
+            session.commit()
+            self._changes.append({'type': 'interaction', 'action': 'created', 'id': i.id, 'contact_id': i.contact_id})
+            return {'interaction': i.to_dict(), 'action': 'created'}
+        finally:
+            session.close()
+
+    def _add_contact_note(self, inp):
+        session = get_session()
+        try:
+            n = ContactNote(
+                contact_id=inp['contact_id'],
+                note=inp['note'],
+                source='chat_debrief',
+            )
+            session.add(n)
+            session.commit()
+            self._changes.append({'type': 'contact_note', 'action': 'created', 'id': n.id, 'contact_id': n.contact_id})
+            return {'contact_note': n.to_dict(), 'action': 'created'}
+        finally:
+            session.close()
+
+    def _log_relationship(self, inp):
+        session = get_session()
+        try:
+            if inp['from_contact_id'] == inp['to_contact_id']:
+                return {'error': 'from_contact_id and to_contact_id must be different'}
+            r = ContactRelationship(
+                from_contact_id=inp['from_contact_id'],
+                to_contact_id=inp['to_contact_id'],
+                type=inp['type'],
+                status=inp['status'],
+                notes=inp.get('notes'),
+            )
+            session.add(r)
+            session.commit()
+            self._changes.append({'type': 'contact_relationship', 'action': 'created', 'id': r.id})
+            return {'contact_relationship': r.to_dict(), 'action': 'created'}
         finally:
             session.close()
