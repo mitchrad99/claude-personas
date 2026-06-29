@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Text, Date, DateTime, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, CheckConstraint, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 
@@ -48,6 +48,8 @@ class Contact(Base):
     tasks = relationship('Task', foreign_keys='Task.linked_contact_id', back_populates='contact')
     funders = relationship('Funder', foreign_keys='Funder.program_officer_contact_id', back_populates='program_officer')
     dc_orgs = relationship('DCOrg', foreign_keys='DCOrg.key_contact_id', back_populates='key_contact')
+    interactions = relationship('Interaction', foreign_keys='Interaction.contact_id', back_populates='contact')
+    contact_notes = relationship('ContactNote', foreign_keys='ContactNote.contact_id', back_populates='contact')
 
     def to_dict(self):
         return {
@@ -115,6 +117,7 @@ class Task(Base):
     due_date = Column(Date)
     priority = Column(String(10), default='medium')   # low, medium, high
     status = Column(String(10), default='pending')    # pending, done
+    category = Column(String(30))   # outreach, intro_followup, fundraising, policy, admin, career, sabbatical_prep
     linked_contact_id = Column(Integer, ForeignKey('contacts.id'))
     linked_funder_id = Column(Integer, ForeignKey('funders.id'))
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -131,6 +134,7 @@ class Task(Base):
             'due_date': self.due_date.isoformat() if self.due_date else None,
             'priority': self.priority,
             'status': self.status,
+            'category': self.category,
             'linked_contact_id': self.linked_contact_id,
             'linked_funder_id': self.linked_funder_id,
             'contact_name': self.contact.name if self.contact else None,
@@ -225,4 +229,90 @@ class Opportunity(Base):
             'notes': self.notes,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class Interaction(Base):
+    __tablename__ = 'interactions'
+
+    id               = Column(Integer, primary_key=True)
+    contact_id       = Column(Integer, ForeignKey('contacts.id'), nullable=False)
+    date             = Column(Date, nullable=False)
+    type             = Column(String(20))    # meeting, call, event, coffee, text, linkedin
+    location         = Column(String(255))
+    notes            = Column(Text)
+    follow_up_needed = Column(Boolean, default=False)
+    created_at       = Column(DateTime, default=datetime.utcnow)
+    updated_at       = Column(DateTime, default=datetime.utcnow)
+
+    contact = relationship('Contact', foreign_keys=[contact_id], back_populates='interactions')
+
+    def to_dict(self):
+        return {
+            'id':               self.id,
+            'contact_id':       self.contact_id,
+            'contact_name':     self.contact.name if self.contact else None,
+            'date':             self.date.isoformat() if self.date else None,
+            'type':             self.type,
+            'location':         self.location,
+            'notes':            self.notes,
+            'follow_up_needed': self.follow_up_needed,
+            'created_at':       self.created_at.isoformat() if self.created_at else None,
+            'updated_at':       self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class ContactNote(Base):
+    __tablename__ = 'contact_notes'
+
+    id         = Column(Integer, primary_key=True)
+    contact_id = Column(Integer, ForeignKey('contacts.id'), nullable=False)
+    note       = Column(Text, nullable=False)
+    source     = Column(String(20), default='manual')   # manual, chat_debrief, ai_generated
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    contact = relationship('Contact', foreign_keys=[contact_id], back_populates='contact_notes')
+
+    def to_dict(self):
+        return {
+            'id':           self.id,
+            'contact_id':   self.contact_id,
+            'contact_name': self.contact.name if self.contact else None,
+            'note':         self.note,
+            'source':       self.source,
+            'created_at':   self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class ContactRelationship(Base):
+    __tablename__ = 'contact_relationships'
+    __table_args__ = (
+        CheckConstraint('from_contact_id != to_contact_id', name='ck_contact_rel_no_self'),
+        UniqueConstraint('from_contact_id', 'to_contact_id', 'type', name='uq_contact_rel'),
+    )
+
+    id              = Column(Integer, primary_key=True)
+    from_contact_id = Column(Integer, ForeignKey('contacts.id'), nullable=False)
+    to_contact_id   = Column(Integer, ForeignKey('contacts.id'), nullable=False)
+    type            = Column(String(30))    # introduced_by, wants_to_connect, peer, mentor, referred_funder
+    status          = Column(String(20), default='completed')   # completed, pending
+    notes           = Column(Text)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    updated_at      = Column(DateTime, default=datetime.utcnow)
+
+    from_contact = relationship('Contact', foreign_keys=[from_contact_id])
+    to_contact   = relationship('Contact', foreign_keys=[to_contact_id])
+
+    def to_dict(self):
+        return {
+            'id':                self.id,
+            'from_contact_id':   self.from_contact_id,
+            'from_contact_name': self.from_contact.name if self.from_contact else None,
+            'to_contact_id':     self.to_contact_id,
+            'to_contact_name':   self.to_contact.name if self.to_contact else None,
+            'type':              self.type,
+            'status':            self.status,
+            'notes':             self.notes,
+            'created_at':        self.created_at.isoformat() if self.created_at else None,
+            'updated_at':        self.updated_at.isoformat() if self.updated_at else None,
         }

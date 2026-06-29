@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request, render_template
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from models import init_db, get_session, Contact, Funder, Task, DCOrg, Opportunity, InboxRecommendation
+from models import init_db, get_session, Contact, Funder, Task, DCOrg, Opportunity, InboxRecommendation, Interaction, ContactNote, ContactRelationship
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
@@ -219,6 +219,7 @@ def create_task():
             description=data.get('description'),
             priority=data.get('priority', 'medium'),
             status=data.get('status', 'pending'),
+            category=data.get('category'),
             linked_contact_id=data.get('linked_contact_id'),
             linked_funder_id=data.get('linked_funder_id'),
             due_date=_parse_date(data.get('due_date')),
@@ -238,7 +239,7 @@ def update_task(tid):
         if not t:
             return bad('not found', 404)
         data = request.json or {}
-        for f in ['title', 'description', 'priority', 'status', 'linked_contact_id', 'linked_funder_id']:
+        for f in ['title', 'description', 'priority', 'status', 'category', 'linked_contact_id', 'linked_funder_id']:
             if f in data:
                 setattr(t, f, data[f])
         if 'due_date' in data:
@@ -426,6 +427,171 @@ def dismiss_inbox(rid):
         rec.status = 'dismissed'
         session.commit()
         return jsonify({'ok': True})
+    finally:
+        session.close()
+
+
+# ── interactions ──────────────────────────────────────────────────────────────
+
+@app.route('/api/interactions', methods=['GET'])
+def list_interactions():
+    session = get_session()
+    try:
+        q = session.query(Interaction)
+        if request.args.get('contact_id'):
+            q = q.filter(Interaction.contact_id == int(request.args['contact_id']))
+        if request.args.get('type'):
+            q = q.filter(Interaction.type == request.args['type'])
+        if request.args.get('follow_up_needed'):
+            q = q.filter(Interaction.follow_up_needed == True)
+        return jsonify([i.to_dict() for i in q.order_by(Interaction.date.desc()).all()])
+    finally:
+        session.close()
+
+
+@app.route('/api/interactions', methods=['POST'])
+def create_interaction():
+    session = get_session()
+    try:
+        data = request.json or {}
+        if not data.get('contact_id'):
+            return bad('contact_id is required')
+        if not data.get('date'):
+            return bad('date is required')
+        i = Interaction(
+            contact_id=data['contact_id'],
+            date=_parse_date(data['date']),
+            type=data.get('type'),
+            location=data.get('location'),
+            notes=data.get('notes'),
+            follow_up_needed=bool(data.get('follow_up_needed', False)),
+        )
+        session.add(i)
+        session.commit()
+        return jsonify(i.to_dict()), 201
+    finally:
+        session.close()
+
+
+@app.route('/api/interactions/<int:iid>', methods=['PUT'])
+def update_interaction(iid):
+    session = get_session()
+    try:
+        i = session.query(Interaction).filter_by(id=iid).first()
+        if not i:
+            return bad('not found', 404)
+        data = request.json or {}
+        for f in ['type', 'location', 'notes']:
+            if f in data:
+                setattr(i, f, data[f])
+        if 'date' in data:
+            i.date = _parse_date(data['date'])
+        if 'follow_up_needed' in data:
+            i.follow_up_needed = bool(data['follow_up_needed'])
+        i.updated_at = datetime.utcnow()
+        session.commit()
+        return jsonify(i.to_dict())
+    finally:
+        session.close()
+
+
+# ── contact_notes ─────────────────────────────────────────────────────────────
+
+@app.route('/api/contact_notes', methods=['GET'])
+def list_contact_notes():
+    session = get_session()
+    try:
+        if not request.args.get('contact_id'):
+            return bad('contact_id is required')
+        notes = (session.query(ContactNote)
+                 .filter(ContactNote.contact_id == int(request.args['contact_id']))
+                 .order_by(ContactNote.created_at.desc())
+                 .all())
+        return jsonify([n.to_dict() for n in notes])
+    finally:
+        session.close()
+
+
+@app.route('/api/contact_notes', methods=['POST'])
+def create_contact_note():
+    session = get_session()
+    try:
+        data = request.json or {}
+        if not data.get('contact_id'):
+            return bad('contact_id is required')
+        if not data.get('note'):
+            return bad('note is required')
+        n = ContactNote(
+            contact_id=data['contact_id'],
+            note=data['note'],
+            source=data.get('source', 'manual'),
+        )
+        session.add(n)
+        session.commit()
+        return jsonify(n.to_dict()), 201
+    finally:
+        session.close()
+
+
+# ── contact_relationships ─────────────────────────────────────────────────────
+
+@app.route('/api/contact_relationships', methods=['GET'])
+def list_contact_relationships():
+    session = get_session()
+    try:
+        q = session.query(ContactRelationship)
+        if request.args.get('contact_id'):
+            cid = int(request.args['contact_id'])
+            q = q.filter(
+                (ContactRelationship.from_contact_id == cid) |
+                (ContactRelationship.to_contact_id == cid)
+            )
+        if request.args.get('type'):
+            q = q.filter(ContactRelationship.type == request.args['type'])
+        return jsonify([r.to_dict() for r in q.order_by(ContactRelationship.created_at.desc()).all()])
+    finally:
+        session.close()
+
+
+@app.route('/api/contact_relationships', methods=['POST'])
+def create_contact_relationship():
+    session = get_session()
+    try:
+        data = request.json or {}
+        if not data.get('from_contact_id'):
+            return bad('from_contact_id is required')
+        if not data.get('to_contact_id'):
+            return bad('to_contact_id is required')
+        if data.get('from_contact_id') == data.get('to_contact_id'):
+            return bad('from_contact_id and to_contact_id must be different')
+        r = ContactRelationship(
+            from_contact_id=data['from_contact_id'],
+            to_contact_id=data['to_contact_id'],
+            type=data.get('type'),
+            status=data.get('status', 'completed'),
+            notes=data.get('notes'),
+        )
+        session.add(r)
+        session.commit()
+        return jsonify(r.to_dict()), 201
+    finally:
+        session.close()
+
+
+@app.route('/api/contact_relationships/<int:rid>', methods=['PUT'])
+def update_contact_relationship(rid):
+    session = get_session()
+    try:
+        r = session.query(ContactRelationship).filter_by(id=rid).first()
+        if not r:
+            return bad('not found', 404)
+        data = request.json or {}
+        for f in ['type', 'status', 'notes']:
+            if f in data:
+                setattr(r, f, data[f])
+        r.updated_at = datetime.utcnow()
+        session.commit()
+        return jsonify(r.to_dict())
     finally:
         session.close()
 
