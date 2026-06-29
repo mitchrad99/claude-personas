@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request, render_template
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from models import init_db, get_session, Contact, Funder, Task, DCOrg, Opportunity, InboxRecommendation, Interaction, ContactNote, ContactRelationship
+from models import init_db, get_session, Contact, Funder, Task, DCOrg, Opportunity, InboxRecommendation, Interaction, ContactNote, ContactRelationship, TaskRecommendation
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
@@ -400,7 +400,10 @@ def get_summary():
             'total_contacts': session.query(Contact).count(),
             'total_funders': session.query(Funder).count(),
             'pending_tasks': session.query(Task).filter(Task.status == 'pending').count(),
-            'pending_inbox': session.query(InboxRecommendation).filter_by(status='pending').count(),
+            'pending_inbox': (
+                session.query(InboxRecommendation).filter_by(status='pending').count() +
+                session.query(TaskRecommendation).filter_by(status='pending').count()
+            ),
         })
     finally:
         session.close()
@@ -646,6 +649,60 @@ def update_contact_relationship(rid):
         r.updated_at = datetime.utcnow()
         session.commit()
         return jsonify(r.to_dict())
+    finally:
+        session.close()
+
+
+# ── task_recommendations ──────────────────────────────────────────────────────
+
+@app.route('/api/task_recommendations', methods=['GET'])
+def list_task_recommendations():
+    session = get_session()
+    try:
+        recs = (session.query(TaskRecommendation)
+                .filter_by(status='pending')
+                .order_by(TaskRecommendation.created_at.desc())
+                .all())
+        return jsonify([r.to_dict() for r in recs])
+    finally:
+        session.close()
+
+
+@app.route('/api/task_recommendations/<int:rid>/accept', methods=['POST'])
+def accept_task_recommendation(rid):
+    session = get_session()
+    try:
+        rec = session.query(TaskRecommendation).filter_by(id=rid, status='pending').first()
+        if not rec:
+            return bad('not found or already processed', 404)
+        data = request.json or {}
+        t = Task(
+            title             = data.get('title') or rec.title,
+            description       = data.get('description', rec.description),
+            priority          = data.get('priority') or rec.priority or 'medium',
+            due_date          = _parse_date(data.get('due_date')),
+            category          = data.get('category') or rec.category,
+            linked_contact_id = rec.linked_contact_id,
+            linked_funder_id  = rec.linked_funder_id,
+        )
+        session.add(t)
+        rec.status = 'accepted'
+        session.commit()
+        return jsonify({'ok': True, 'task': t.to_dict()})
+    finally:
+        session.close()
+
+
+@app.route('/api/task_recommendations/<int:rid>/dismiss', methods=['POST'])
+def dismiss_task_recommendation(rid):
+    session = get_session()
+    try:
+        rec = session.query(TaskRecommendation).filter_by(id=rid, status='pending').first()
+        if not rec:
+            return bad('not found', 404)
+        rec.status = 'dismissed'
+        session.commit()
+        return jsonify({'ok': True})
     finally:
         session.close()
 

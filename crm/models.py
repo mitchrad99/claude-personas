@@ -316,3 +316,43 @@ class ContactRelationship(Base):
             'created_at':        self.created_at.isoformat() if self.created_at else None,
             'updated_at':        self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class TaskRecommendation(Base):
+    __tablename__ = 'task_recommendations'
+
+    id                = Column(Integer, primary_key=True)
+    title             = Column(String(255), nullable=False)
+    description       = Column(Text)
+    due_date          = Column(Date)
+    priority          = Column(String(10))
+    linked_contact_id = Column(Integer, ForeignKey('contacts.id'))
+    linked_funder_id  = Column(Integer, ForeignKey('funders.id'))
+    category          = Column(String(30))
+    source            = Column(String(20))       # gmail, slack, manual
+    source_context    = Column(Text)
+    ai_summary        = Column(Text)
+    status            = Column(String(20), default='pending')  # pending, accepted, dismissed
+    created_at        = Column(DateTime, default=datetime.utcnow)
+
+    linked_contact = relationship('Contact', foreign_keys=[linked_contact_id])
+    linked_funder  = relationship('Funder', foreign_keys=[linked_funder_id])
+
+    def to_dict(self):
+        return {
+            'id':                  self.id,
+            'title':               self.title,
+            'description':         self.description,
+            'due_date':            self.due_date.isoformat() if self.due_date else None,
+            'priority':            self.priority,
+            'linked_contact_id':   self.linked_contact_id,
+            'linked_contact_name': self.linked_contact.name if self.linked_contact else None,
+            'linked_funder_id':    self.linked_funder_id,
+            'linked_funder_name':  self.linked_funder.organization if self.linked_funder else None,
+            'category':            self.category,
+            'source':              self.source,
+            'source_context':      self.source_context,
+            'ai_summary':          self.ai_summary,
+            'status':              self.status,
+            'created_at':          self.created_at.isoformat() if self.created_at else None,
+        }

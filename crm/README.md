@@ -24,7 +24,7 @@ A personal relationship management tool for Mitch Radakovich, board chair of [Al
 ```
 crm/
 ├── app.py                   # Flask routes and all API endpoints
-├── models.py                # SQLAlchemy ORM — 9 tables, dual SQLite/Postgres support
+├── models.py                # SQLAlchemy ORM — 10 tables, dual SQLite/Postgres support
 ├── chat.py                  # Claude Sonnet chat engine with CRM tool use
 ├── gmail_sync.py            # Updates contact email fields from Gmail (scheduled)
 ├── inbox_scan.py            # AI-powered inbox scan for unknown senders (scheduled)
@@ -39,7 +39,8 @@ crm/
 │   ├── add_task_category.sql          # Adds category column to tasks
 │   ├── add_interactions.sql           # Creates interactions table
 │   ├── add_contact_notes.sql          # Creates contact_notes table
-│   └── add_contact_relationships.sql  # Creates contact_relationships table
+│   ├── add_contact_relationships.sql  # Creates contact_relationships table
+│   └── add_task_recommendations.sql   # Creates task_recommendations table
 └── templates/
     └── index.html           # Single-page app (~1200 lines, vanilla JS, no framework)
 ```
@@ -203,6 +204,26 @@ Social graph edges between contacts. Tracks introductions made, promised, or pen
 
 Constraints: `CHECK (from_contact_id != to_contact_id)` and `UNIQUE (from_contact_id, to_contact_id, type)`. Indexed on both FK columns.
 
+### `task_recommendations`
+
+AI-generated task suggestions pending human review. Distinct from `inbox_recommendations` (which is tied to unknown email senders) — task recommendations can come from any source (Gmail context, Slack, manual AI suggestions). Stays in this table until accepted or dismissed.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | |
+| `title` | string(255) NOT NULL | Suggested task title |
+| `description` | text | Optional description |
+| `due_date` | date | Suggested due date |
+| `priority` | string(10) | `low` \| `medium` \| `high` |
+| `linked_contact_id` | integer FK → contacts.id | Optional — contact this task relates to |
+| `linked_funder_id` | integer FK → funders.id | Optional |
+| `category` | string(30) | Same values as `tasks.category` |
+| `source` | string(20) | `gmail` \| `slack` \| `manual` |
+| `source_context` | text | Email subject or message snippet that triggered the recommendation |
+| `ai_summary` | text | One-sentence explanation from Claude on why this task matters |
+| `status` | string(20) | `pending` \| `accepted` \| `dismissed` |
+| `created_at` | datetime | |
+
 ---
 
 ## UI tabs
@@ -258,12 +279,15 @@ Available tools (13): `get_contacts`, `create_or_update_contact`, `create_task`,
 
 ### Inbox
 
-Review queue for AI-generated recommendations from inbox_scan.py. Each card shows sender info, the email snippet, Claude's one-sentence rationale, and pre-filled suggested fields (editable before accepting).
+Two-section review queue for AI-generated items. The tab badge counts total pending across both sections; `pending_inbox` in `/api/summary` includes both `inbox_recommendations` and `task_recommendations`.
 
-- **Accept** — creates a Contact or Task from the (editable) suggested fields, marks recommendation `accepted`
-- **Dismiss** — marks recommendation `dismissed`
+**New Contacts** — `inbox_recommendations` rows with `recommendation_type = new_contact` from inbox_scan.py. Each card shows sender name, email, email snippet, Claude's rationale, and pre-filled suggested fields editable before accepting.
+- **Accept** → creates a Contact row from the (edited) suggested fields
+- **Dismiss** → marks `dismissed`
 
-The tab badge ("Inbox (3)") is set from `pending_inbox` in `/api/summary` on page load.
+**Suggested Tasks** — `task_recommendations` rows. Each card shows the task title, linked contact (if any), source badge (Gmail / Slack), the triggering context snippet, Claude's one-sentence AI summary, and suggested due date. All fields are editable before accepting.
+- **Accept** → creates a Task row from the (edited) fields, preserves `linked_contact_id` and `linked_funder_id` from the recommendation
+- **Dismiss** → marks `dismissed`
 
 ---
 
@@ -350,6 +374,9 @@ All endpoints require HTTP Basic Auth. All responses are JSON.
 | GET | `/api/contact_relationships` | List relationship edges; filter by `?contact_id=` (matches either side), `?type=` |
 | POST | `/api/contact_relationships` | Create relationship (`from_contact_id` and `to_contact_id` required) |
 | PUT | `/api/contact_relationships/<id>` | Update relationship type, status, or notes |
+| GET | `/api/task_recommendations` | List pending task recommendations |
+| POST | `/api/task_recommendations/<id>/accept` | Accept → creates a Task, marks recommendation `accepted` |
+| POST | `/api/task_recommendations/<id>/dismiss` | Dismiss recommendation |
 
 `GET /api/contacts` also annotates each contact with `next_task` (title of oldest pending task linked to that contact) and `next_task_due`.
 
