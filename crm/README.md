@@ -13,7 +13,9 @@ A personal relationship management tool for Mitch Radakovich, board chair of [Al
 | Auth | HTTP Basic Auth via `flask-httpauth` + `werkzeug.security` |
 | AI — chat | Anthropic `claude-sonnet-4-6` with tool use |
 | AI — inbox scan | Anthropic `claude-haiku-4-5-20251001` (~$0.001/call) |
+| AI — Slack sync | Anthropic `claude-haiku-4-5-20251001` (~$0.001/call) |
 | Email | Gmail API, OAuth 2.0 (readonly scope) |
+| Slack | Slack Bot token (Bot API) |
 | Deployment | Render.com (auto-deploy from `main`); root directory = `crm/` |
 | Automation | GitHub Actions cron, every 6 hours |
 
@@ -28,6 +30,7 @@ crm/
 ├── chat.py                  # Claude Sonnet chat engine with CRM tool use
 ├── gmail_sync.py            # Updates contact email fields from Gmail (scheduled)
 ├── inbox_scan.py            # AI-powered inbox scan for unknown senders (scheduled)
+├── slack_sync.py            # Slack DM/channel scan + AI task triage (scheduled)
 ├── auth_gmail.py            # One-time local OAuth setup — generates token.json
 ├── migrate_to_supabase.py   # One-time SQLite → Supabase migration (idempotent)
 ├── requirements.txt
@@ -40,7 +43,8 @@ crm/
 │   ├── add_interactions.sql           # Creates interactions table
 │   ├── add_contact_notes.sql          # Creates contact_notes table
 │   ├── add_contact_relationships.sql  # Creates contact_relationships table
-│   └── add_task_recommendations.sql   # Creates task_recommendations table
+│   ├── add_task_recommendations.sql   # Creates task_recommendations table
+│   └── add_slack_user_id.sql          # Adds slack_user_id column to contacts
 └── templates/
     └── index.html           # Single-page app (~1200 lines, vanilla JS, no framework)
 ```
@@ -71,6 +75,7 @@ The core table. Each row is a person in Mitch's professional network.
 | `last_email_subject` | string(500) | Written by gmail_sync.py |
 | `last_email_direction` | string(10) | `inbound` \| `outbound` — written by gmail_sync.py |
 | `last_synced_at` | datetime | Written by gmail_sync.py — controls the search window on next run |
+| `slack_user_id` | string(100) | Slack user ID (e.g., `U01ABC123`); used by slack_sync.py to match DMs |
 | `created_at` | datetime | |
 | `updated_at` | datetime | |
 
@@ -223,6 +228,34 @@ AI-generated task suggestions pending human review. Distinct from `inbox_recomme
 | `ai_summary` | text | One-sentence explanation from Claude on why this task matters |
 | `status` | string(20) | `pending` \| `accepted` \| `dismissed` |
 | `created_at` | datetime | |
+
+### `slack_sync.py` — Slack DM and channel scan
+
+**What it does:** Scans Slack for contact activity and AI-generated task signals.
+
+- **DMs**: Iterates all open DM conversations. Matches the other user to a contact via `slack_user_id`. For matched contacts, updates `last_contact_date` and logs an `Interaction` record (type=`text`). For unmatched DM senders, creates an `inbox_recommendation` row (type=`new_contact`) with the Slack display name and message snippet.
+- **@mentions**: Scans all channels the bot is a member of. Filters messages that contain `<@MITCH_USER_ID>`. Logs interactions for matched contacts.
+- **SLACK_CHANNEL_IDS**: Scans any channels listed in the env var regardless of @mentions. Logs interactions for matched contacts.
+- **AI triage**: Evaluates all collected messages (newest-first, cap 20) for task-worthy signals — requests, commitments, deadlines, follow-up cues. Creates `task_recommendation` rows with `source='slack'` for anything actionable.
+
+**Frequency:** Every 6 hours via GitHub Actions, in a separate `slack-sync` job that runs after the `sync` job (Gmail + inbox scan) completes.
+
+**Cost:** At most 20 Anthropic API calls per run → **≤ $0.02 per run**.
+
+**Scan window:** Uses `MAX(task_recommendations.created_at WHERE source='slack')` as the look-back timestamp. Defaults to 24 hours ago on first run or when no Slack task recs exist.
+
+**Deduplication:**
+- Unmatched DM senders: skipped if their Slack user ID already appears in a pending `inbox_recommendation.sender_email`.
+- AI triage candidates: deduplicated by (sender_id, text prefix) before capping at 20.
+
+**Failure modes:**
+- Missing required env vars → immediate `sys.exit` with a clear message before any imports.
+- Slack API auth failure → `sys.exit`.
+- Per-channel or per-message Slack API error → logs warning, continues to next item.
+- Per-message Anthropic API error → logs error, continues (does not abort run).
+- DB commit failure → rolls back and `sys.exit`.
+
+**Required bot token scopes:** `channels:history`, `channels:read`, `groups:history`, `groups:read`, `im:history`, `im:read`, `users:read`.
 
 ---
 
@@ -400,7 +433,10 @@ All endpoints require HTTP Basic Auth. All responses are JSON.
 |---|---|
 | `SUPABASE_URL` | Same PostgreSQL URL used as `DATABASE_URL` on Render |
 | `GMAIL_TOKEN_JSON` | Base64-encoded `token.json` from the Gmail OAuth flow |
-| `ANTHROPIC_API_KEY` | Anthropic API key (used by inbox_scan.py) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (used by inbox_scan.py and slack_sync.py) |
+| `SLACK_BOT_TOKEN` | Slack Bot token (`xoxb-...`); required for slack_sync.py |
+| `SLACK_USER_ID` | Mitch's Slack user ID (e.g., `U01ABC123`); required for slack_sync.py |
+| `SLACK_CHANNEL_IDS` | Optional comma-separated channel IDs to always scan (e.g., `C01ABC,C02DEF`) |
 
 ---
 

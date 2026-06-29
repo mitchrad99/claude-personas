@@ -17,7 +17,7 @@ This is a personal CRM for Mitch Radakovich, board chair of All Aboard Ohio (AAO
 | AI — inbox scan | `claude-haiku-4-5-20251001` in `inbox_scan.py`; ≤20 calls/run, ~$0.001 each |
 | Email | Gmail API OAuth 2.0 (readonly scope); token stored as base64 env var |
 | Hosting | Render.com — root directory = `crm/`, auto-deploy from `main`, `Procfile` = `web: gunicorn app:app` |
-| Automation | GitHub Actions cron (`0 */6 * * *`) running `gmail_sync.py` then `inbox_scan.py` |
+| Automation | GitHub Actions cron (`0 */6 * * *`): `gmail_sync.py` + `inbox_scan.py` in job `sync`, then `slack_sync.py` in dependent job `slack-sync` |
 | Frontend | Single HTML file (`templates/index.html`), vanilla JS, `fetch()`, no framework or build step |
 
 **Database URL resolution** (`models.py`, import time):
@@ -161,9 +161,12 @@ After completing any task that modifies the codebase — new feature, schema cha
 
 | Secret | Used by | Notes |
 |---|---|---|
-| `SUPABASE_URL` | `gmail_sync.py`, `inbox_scan.py` | Same PostgreSQL URL as `DATABASE_URL` on Render |
+| `SUPABASE_URL` | `gmail_sync.py`, `inbox_scan.py`, `slack_sync.py` | Same PostgreSQL URL as `DATABASE_URL` on Render |
 | `GMAIL_TOKEN_JSON` | `gmail_sync.py`, `inbox_scan.py` | Base64-encoded `token.json`; run `auth_gmail.py` once locally to generate |
-| `ANTHROPIC_API_KEY` | `inbox_scan.py` | Same key as on Render |
+| `ANTHROPIC_API_KEY` | `inbox_scan.py`, `slack_sync.py` | Same key as on Render |
+| `SLACK_BOT_TOKEN` | `slack_sync.py` | Slack Bot token (`xoxb-...`); required scopes: channels:history, channels:read, groups:history, groups:read, im:history, im:read, users:read |
+| `SLACK_USER_ID` | `slack_sync.py` | Mitch's Slack user ID (e.g., `U01ABC123`) — find in Slack profile → More |
+| `SLACK_CHANNEL_IDS` | `slack_sync.py` | Optional comma-separated channel IDs to always scan |
 
 ---
 

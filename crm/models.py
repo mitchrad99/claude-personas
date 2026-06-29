@@ -42,6 +42,7 @@ class Contact(Base):
     last_email_subject = Column(String(500))
     last_email_direction = Column(String(10))   # 'inbound' or 'outbound'
     last_synced_at = Column(DateTime)
+    slack_user_id = Column(String(100))
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -67,6 +68,7 @@ class Contact(Base):
             'last_email_subject': self.last_email_subject,
             'last_email_direction': self.last_email_direction,
             'last_synced_at': self.last_synced_at.isoformat() if self.last_synced_at else None,
+            'slack_user_id': self.slack_user_id,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
