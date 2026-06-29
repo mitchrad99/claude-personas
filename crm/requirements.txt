@@ -1,4 +1,5 @@
 flask>=2.3
+flask-httpauth>=4.8
 sqlalchemy>=1.4
 anthropic>=0.30
 psycopg2-binary>=2.9

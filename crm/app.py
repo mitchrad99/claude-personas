@@ -1,13 +1,32 @@
 import os
 from datetime import date, datetime, timedelta
 from flask import Flask, jsonify, request, render_template
+from flask_httpauth import HTTPBasicAuth
+from werkzeug.security import generate_password_hash, check_password_hash
 
 from models import init_db, get_session, Contact, Funder, Task, DCOrg, Opportunity
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
 
+auth = HTTPBasicAuth()
+
+_CRM_USERNAME = os.environ.get('CRM_USERNAME', 'admin')
+_CRM_PASSWORD = os.environ.get('CRM_PASSWORD')
+if not _CRM_PASSWORD:
+    raise RuntimeError("CRM_PASSWORD environment variable is not set.")
+_USERS = {_CRM_USERNAME: generate_password_hash(_CRM_PASSWORD)}
+
+@auth.verify_password
+def verify_password(username, password):
+    if username in _USERS and check_password_hash(_USERS[username], password):
+        return username
+
 init_db()
+
+@app.before_request
+def require_auth():
+    return auth.login_required(lambda: None)()
 
 # Lazy-load ChatEngine so Flask starts even if ANTHROPIC_API_KEY isn't set yet
 _chat_engine = None
