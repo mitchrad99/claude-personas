@@ -1,10 +1,11 @@
 import os
+import json
 from datetime import date, datetime, timedelta
 from flask import Flask, jsonify, request, render_template
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from models import init_db, get_session, Contact, Funder, Task, DCOrg, Opportunity
+from models import init_db, get_session, Contact, Funder, Task, DCOrg, Opportunity, InboxRecommendation
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
@@ -344,6 +345,7 @@ def get_summary():
             'total_contacts': session.query(Contact).count(),
             'total_funders': session.query(Funder).count(),
             'pending_tasks': session.query(Task).filter(Task.status == 'pending').count(),
+            'pending_inbox': session.query(InboxRecommendation).filter_by(status='pending').count(),
         })
     finally:
         session.close()
@@ -359,6 +361,73 @@ def chat():
         return bad('message is required')
     response, changes = get_chat_engine().chat(message)
     return jsonify({'response': response, 'changes': changes})
+
+
+# ── inbox ─────────────────────────────────────────────────────────────────────
+
+@app.route('/api/inbox', methods=['GET'])
+def list_inbox():
+    session = get_session()
+    try:
+        recs = (session.query(InboxRecommendation)
+                .filter_by(status='pending')
+                .order_by(InboxRecommendation.email_date.desc())
+                .all())
+        return jsonify([r.to_dict() for r in recs])
+    finally:
+        session.close()
+
+
+@app.route('/api/inbox/<int:rid>/accept', methods=['POST'])
+def accept_inbox(rid):
+    session = get_session()
+    try:
+        rec = session.query(InboxRecommendation).filter_by(id=rid, status='pending').first()
+        if not rec:
+            return bad('not found or already processed', 404)
+
+        data = request.json or {}
+
+        if rec.recommendation_type == 'new_contact':
+            obj = Contact(
+                name         = data.get('name') or rec.sender_name or 'Unknown',
+                organization = data.get('organization'),
+                title        = data.get('title'),
+                email        = data.get('email') or rec.sender_email,
+                phone        = data.get('phone'),
+                warmth       = data.get('warmth', 'cold'),
+                category     = data.get('category', 'other'),
+                notes        = data.get('notes'),
+            )
+            session.add(obj)
+        elif rec.recommendation_type == 'new_task':
+            obj = Task(
+                title       = data.get('title') or f'Follow up with {rec.sender_name}',
+                description = data.get('description'),
+                priority    = data.get('priority', 'medium'),
+                due_date    = _parse_date(data.get('due_date')),
+            )
+            session.add(obj)
+
+        rec.status = 'accepted'
+        session.commit()
+        return jsonify({'ok': True})
+    finally:
+        session.close()
+
+
+@app.route('/api/inbox/<int:rid>/dismiss', methods=['POST'])
+def dismiss_inbox(rid):
+    session = get_session()
+    try:
+        rec = session.query(InboxRecommendation).filter_by(id=rid, status='pending').first()
+        if not rec:
+            return bad('not found', 404)
+        rec.status = 'dismissed'
+        session.commit()
+        return jsonify({'ok': True})
+    finally:
+        session.close()
 
 
 if __name__ == '__main__':

@@ -282,6 +282,22 @@
     .email-brief     { white-space: nowrap; }
     @media (max-width: 640px) { .hide-sm { display: none; } }
 
+    /* ── inbox cards ── */
+    .badge-new-contact { background: var(--accent-light); color: var(--accent); }
+    .badge-new-task    { background: var(--warm-bg);      color: var(--warm); }
+    .inbox-list { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
+    .inbox-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); box-shadow: var(--shadow); }
+    .inbox-card-top { padding: 14px 16px 10px; }
+    .inbox-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+    .inbox-sender strong { display: block; font-size: .95rem; }
+    .inbox-sender small  { color: var(--text2); font-size: .79rem; }
+    .inbox-meta    { font-size: .78rem; color: var(--text2); margin-bottom: 8px; }
+    .inbox-snippet { font-size: .8rem; color: var(--text2); margin-bottom: 10px; padding-left: 10px; border-left: 3px solid var(--border); font-style: italic; line-height: 1.4; }
+    .inbox-summary { font-size: .85rem; margin-bottom: 0; }
+    .inbox-fields  { background: var(--bg2); border-top: 1px solid var(--border); padding: 12px 16px; }
+    .inbox-fields-label { font-size: .72rem; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+    .inbox-actions { padding: 10px 16px 14px; display: flex; gap: 8px; }
+
     /* ── expand row ── */
     .expand-row td { padding: 0; }
     .expand-content {
@@ -358,6 +374,7 @@
   <button class="tab-btn" data-tab="tasks">Tasks</button>
   <button class="tab-btn" data-tab="dc-orgs">DC Orgs</button>
   <button class="tab-btn" data-tab="opportunities">Opportunities</button>
+  <button class="tab-btn" data-tab="inbox" id="tab-inbox">Inbox</button>
 </nav>
 
 <main>
@@ -533,6 +550,18 @@
     </div>
   </div>
 
+
+  <!-- INBOX -->
+  <div id="pane-inbox" class="tab-pane">
+    <div class="pane-header">
+      <h2>Inbox</h2>
+      <span style="color:var(--text2);font-size:.82rem">AI-surfaced contacts &amp; tasks from unrecognized senders</span>
+    </div>
+    <div class="inbox-list" id="inbox-list">
+      <div class="empty-state">Loading…</div>
+    </div>
+  </div>
+
 </main>
 
 <!-- MODAL -->
@@ -568,6 +597,7 @@ function loadTab(tab) {
   if (tab === 'tasks') loadTasks();
   if (tab === 'dc-orgs') loadDCOrgs();
   if (tab === 'opportunities') loadOpportunities();
+  if (tab === 'inbox') loadInbox();
 }
 
 // ── api helpers ───────────────────────────────────────────────────────────────
@@ -592,6 +622,9 @@ async function loadSummary() {
     pills.innerHTML = items.map(i =>
       `<span class="pill${i.red ? ' red' : ''}">${i.label}</span>`
     ).join('');
+    // inbox badge
+    const inboxTab = document.getElementById('tab-inbox');
+    inboxTab.textContent = s.pending_inbox > 0 ? `Inbox (${s.pending_inbox})` : 'Inbox';
   } catch(e) {}
 }
 loadSummary();
@@ -1160,6 +1193,161 @@ async function submitModal() {
 
 // close on Escape
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ── inbox ─────────────────────────────────────────────────────────────────────
+let inboxData = [];
+
+async function loadInbox() {
+  const el = document.getElementById('inbox-list');
+  try {
+    inboxData = await api('GET', '/api/inbox');
+    _setInboxBadge(inboxData.length);
+    renderInbox();
+  } catch(e) {
+    el.innerHTML = `<div class="empty-state">Error loading inbox</div>`;
+  }
+}
+
+function renderInbox() {
+  const el = document.getElementById('inbox-list');
+  if (!inboxData.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:40px 16px">No pending recommendations — check back after the next Gmail scan.</div>';
+    return;
+  }
+  el.innerHTML = inboxData.map(r => inboxCardHtml(r)).join('');
+}
+
+function inboxCardHtml(r) {
+  const fields  = r.recommendation_json ? JSON.parse(r.recommendation_json) : {};
+  const isCx    = r.recommendation_type === 'new_contact';
+  const badge   = isCx
+    ? '<span class="badge badge-new-contact">New contact</span>'
+    : '<span class="badge badge-new-task">New task</span>';
+  const dateStr = r.email_date ? fmtDate(r.email_date.slice(0, 10)) : '';
+
+  return `
+  <div class="inbox-card" id="inbox-card-${r.id}">
+    <div class="inbox-card-top">
+      <div class="inbox-card-header">
+        <div class="inbox-sender">
+          <strong>${esc(r.sender_name || 'Unknown')}</strong>
+          <small>${esc(r.sender_email)}</small>
+        </div>
+        ${badge}
+      </div>
+      <div class="inbox-meta">${dateStr}${dateStr && r.email_subject ? ' · ' : ''}${esc(r.email_subject || '')}</div>
+      ${r.email_snippet ? `<div class="inbox-snippet">${esc(r.email_snippet)}</div>` : ''}
+      ${r.recommendation_summary ? `<div class="inbox-summary">${esc(r.recommendation_summary)}</div>` : ''}
+    </div>
+    <div class="inbox-fields">
+      <div class="inbox-fields-label">Suggested fields — edit before accepting</div>
+      ${isCx ? _contactFieldsHtml(r.id, fields) : _taskFieldsHtml(r.id, fields)}
+    </div>
+    <div class="inbox-actions">
+      <button class="btn btn-primary btn-sm" onclick="acceptRec(${r.id})">Accept</button>
+      <button class="btn btn-ghost btn-sm"   onclick="dismissRec(${r.id})">Dismiss</button>
+    </div>
+  </div>`;
+}
+
+function _contactFieldsHtml(id, f) {
+  const cats = ['advocacy','funder','government','media','peer_org','dc_network','other'];
+  return `
+  <div class="form-grid">
+    <div class="form-field"><label>Name</label><input id="if-${id}-name" value="${esc(f.name||'')}"></div>
+    <div class="form-field"><label>Organization</label><input id="if-${id}-org" value="${esc(f.organization||'')}"></div>
+    <div class="form-field"><label>Title</label><input id="if-${id}-title" value="${esc(f.title||'')}"></div>
+    <div class="form-field"><label>Email</label><input type="email" id="if-${id}-email" value="${esc(f.email||'')}"></div>
+    <div class="form-field"><label>Category</label>
+      <select id="if-${id}-category">
+        ${cats.map(v => `<option value="${v}" ${(f.category||'other')===v?'selected':''}>${v}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-field"><label>Warmth</label>
+      <select id="if-${id}-warmth">
+        <option value="cold" ${(f.warmth||'cold')==='cold'?'selected':''}>Cold</option>
+        <option value="warm" ${f.warmth==='warm'?'selected':''}>Warm</option>
+        <option value="hot"  ${f.warmth==='hot'?'selected':''}>Hot</option>
+      </select>
+    </div>
+  </div>
+  <div class="form-field" style="margin-top:8px">
+    <label>Notes</label>
+    <textarea class="field" id="if-${id}-notes" style="width:100%">${esc(f.notes||'')}</textarea>
+  </div>`;
+}
+
+function _taskFieldsHtml(id, f) {
+  return `
+  <div class="form-grid">
+    <div class="form-field" style="grid-column:1/-1">
+      <label>Title</label><input id="if-${id}-title" value="${esc(f.title||'')}" style="width:100%">
+    </div>
+    <div class="form-field"><label>Priority</label>
+      <select id="if-${id}-priority">
+        <option value="medium" ${(f.priority||'medium')==='medium'?'selected':''}>Medium</option>
+        <option value="high"   ${f.priority==='high'?'selected':''}>High</option>
+        <option value="low"    ${f.priority==='low'?'selected':''}>Low</option>
+      </select>
+    </div>
+    <div class="form-field"><label>Due Date</label>
+      <input type="date" id="if-${id}-due" value="${esc(f.due_date||'')}">
+    </div>
+  </div>
+  <div class="form-field" style="margin-top:8px">
+    <label>Description</label>
+    <textarea class="field" id="if-${id}-desc" style="width:100%">${esc(f.description||'')}</textarea>
+  </div>`;
+}
+
+async function acceptRec(id) {
+  const r = inboxData.find(x => x.id === id);
+  if (!r) return;
+  let body;
+  if (r.recommendation_type === 'new_contact') {
+    body = {
+      name:         document.getElementById(`if-${id}-name`).value,
+      organization: document.getElementById(`if-${id}-org`).value,
+      title:        document.getElementById(`if-${id}-title`).value,
+      email:        document.getElementById(`if-${id}-email`).value,
+      category:     document.getElementById(`if-${id}-category`).value,
+      warmth:       document.getElementById(`if-${id}-warmth`).value,
+      notes:        document.getElementById(`if-${id}-notes`).value,
+    };
+  } else {
+    body = {
+      title:       document.getElementById(`if-${id}-title`).value,
+      priority:    document.getElementById(`if-${id}-priority`).value,
+      due_date:    document.getElementById(`if-${id}-due`).value || null,
+      description: document.getElementById(`if-${id}-desc`).value,
+    };
+  }
+  try {
+    await api('POST', `/api/inbox/${id}/accept`, body);
+    _removeCard(id);
+    loadSummary();   // refresh summary counts + badge
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function dismissRec(id) {
+  try {
+    await api('POST', `/api/inbox/${id}/dismiss`, {});
+    _removeCard(id);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+function _removeCard(id) {
+  inboxData = inboxData.filter(x => x.id !== id);
+  const card = document.getElementById(`inbox-card-${id}`);
+  if (card) card.remove();
+  _setInboxBadge(inboxData.length);
+  if (!inboxData.length) renderInbox();
+}
+
+function _setInboxBadge(n) {
+  const tab = document.getElementById('tab-inbox');
+  tab.textContent = n > 0 ? `Inbox (${n})` : 'Inbox';
+}
 
 // ── utils ─────────────────────────────────────────────────────────────────────
 function esc(s) {

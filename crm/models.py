@@ -168,6 +168,37 @@ class DCOrg(Base):
         }
 
 
+class InboxRecommendation(Base):
+    __tablename__ = 'inbox_recommendations'
+
+    id                     = Column(Integer, primary_key=True)
+    sender_name            = Column(String(255))
+    sender_email           = Column(String(255))
+    email_subject          = Column(String(500))
+    email_date             = Column(DateTime)
+    email_snippet          = Column(Text)
+    recommendation_type    = Column(String(20))   # 'new_contact' or 'new_task'
+    recommendation_json    = Column(Text)          # suggested_fields as JSON
+    recommendation_summary = Column(Text)
+    status                 = Column(String(20), default='pending')  # pending/accepted/dismissed
+    created_at             = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id':                     self.id,
+            'sender_name':            self.sender_name,
+            'sender_email':           self.sender_email,
+            'email_subject':          self.email_subject,
+            'email_date':             self.email_date.isoformat() if self.email_date else None,
+            'email_snippet':          self.email_snippet,
+            'recommendation_type':    self.recommendation_type,
+            'recommendation_json':    self.recommendation_json,
+            'recommendation_summary': self.recommendation_summary,
+            'status':                 self.status,
+            'created_at':             self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class Opportunity(Base):
     __tablename__ = 'opportunities'
 

@@ -28,3 +28,10 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
         run: python3 crm/gmail_sync.py
+
+      - name: Run inbox scan
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          GMAIL_TOKEN_JSON: ${{ secrets.GMAIL_TOKEN_JSON }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 crm/inbox_scan.py
