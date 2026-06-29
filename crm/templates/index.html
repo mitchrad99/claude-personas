@@ -358,6 +358,17 @@
       display: inline-block;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── contact detail sections ── */
+    .detail-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+    .detail-label { font-size: .72rem; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+    .detail-sub-label { font-size: .7rem; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; margin: 10px 0 4px; }
+    .detail-sub-label:first-child { margin-top: 0; }
+    .detail-item { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: .84rem; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; line-height: 1.4; }
+    .detail-item:last-child { border-bottom: none; }
+    .detail-note { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: .84rem; line-height: 1.4; }
+    .detail-note:last-child { border-bottom: none; }
+    .detail-empty { color: var(--text2); font-size: .84rem; padding: 4px 0; }
   </style>
 </head>
 <body>
@@ -800,9 +811,24 @@ function toggleContactExpand(row, id) {
         <button class="btn btn-primary btn-sm" onclick="saveContact(${id})">Save</button>
         <button class="btn btn-ghost btn-sm" onclick="this.closest('.expand-row').previousElementSibling.click()">Cancel</button>
       </div>
+      <div class="detail-section">
+        <div class="detail-label">Interactions</div>
+        <div id="contact-interactions-${id}"><span class="spinner"></span></div>
+      </div>
+      <div class="detail-section">
+        <div class="detail-label">Notes</div>
+        <div id="contact-notes-${id}"><span class="spinner"></span></div>
+      </div>
+      <div class="detail-section">
+        <div class="detail-label">Relationships</div>
+        <div id="contact-rels-${id}"><span class="spinner"></span></div>
+      </div>
     </div>
   </td>`;
   row.after(tr);
+  loadContactInteractions(id);
+  loadContactNotes(id);
+  loadContactRelationships(id);
 }
 
 async function saveContact(id) {
@@ -820,6 +846,124 @@ async function saveContact(id) {
     });
     loadContacts();
   } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── contact detail sections ───────────────────────────────────────────────────
+function relTime(isoStr) {
+  const d = daysAgo(isoStr);
+  if (d === null) return '';
+  if (d === 0) return 'today';
+  if (d === 1) return '1d ago';
+  if (d < 7)   return `${d}d ago`;
+  if (d < 30)  return `${Math.floor(d / 7)}w ago`;
+  if (d < 365) return `${Math.floor(d / 30)}mo ago`;
+  return `${Math.floor(d / 365)}y ago`;
+}
+
+function _itypeBadge(type) {
+  const cls = { meeting: 'badge-done', call: 'badge-done', event: 'badge-medium',
+                coffee: 'badge-medium', text: 'badge-cold', linkedin: 'badge-cold' }[type] || 'badge-cold';
+  return `<span class="badge ${cls}">${esc(type || '?')}</span>`;
+}
+
+function _srcBadge(src) {
+  const cls = { chat_debrief: 'badge-done', ai_generated: 'badge-medium', manual: 'badge-cold' }[src] || 'badge-cold';
+  const lbl = { chat_debrief: 'chat', ai_generated: 'AI', manual: 'manual' }[src] || esc(src || '');
+  return `<span class="badge ${cls}">${lbl}</span>`;
+}
+
+function _relBadge(type) {
+  const cls = { introduced_by: 'badge-done', peer: 'badge-low', mentor: 'badge-low',
+                referred_funder: 'badge-medium', wants_to_connect: 'badge-medium' }[type] || 'badge-cold';
+  return `<span class="badge ${cls}">${esc((type || '').replace(/_/g, ' '))}</span>`;
+}
+
+async function loadContactInteractions(id) {
+  const el = document.getElementById(`contact-interactions-${id}`);
+  if (!el) return;
+  try {
+    const data = await api('GET', `/api/contacts/${id}/interactions`);
+    if (!data.length) {
+      el.innerHTML = `<div class="detail-empty">No interactions logged yet.</div>`;
+      return;
+    }
+    el.innerHTML = data.map(i => `
+      <div class="detail-item">
+        ${_itypeBadge(i.type)}
+        <span style="white-space:nowrap">${fmtDate(i.date)}</span>
+        ${i.location ? `<span style="color:var(--text2)">@ ${esc(i.location)}</span>` : ''}
+        <span style="flex:1;min-width:0">${esc(i.notes || '')}</span>
+        ${i.follow_up_needed ? `<span style="color:var(--danger);font-size:.75rem;white-space:nowrap">↩ follow up</span>` : ''}
+      </div>`).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="detail-empty" style="color:var(--danger)">Error loading interactions</div>`;
+  }
+}
+
+async function loadContactNotes(id) {
+  const el = document.getElementById(`contact-notes-${id}`);
+  if (!el) return;
+  try {
+    const data = await api('GET', `/api/contacts/${id}/notes`);
+    if (!data.length) {
+      el.innerHTML = `<div class="detail-empty">No notes yet.</div>`;
+      return;
+    }
+    el.innerHTML = data.map(n => `
+      <div class="detail-note">
+        <div style="margin-bottom:4px">${esc(n.note)}</div>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${_srcBadge(n.source)}
+          <span style="color:var(--text2);font-size:.75rem">${relTime(n.created_at)}</span>
+        </div>
+      </div>`).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="detail-empty" style="color:var(--danger)">Error loading notes</div>`;
+  }
+}
+
+async function loadContactRelationships(id) {
+  const el = document.getElementById(`contact-rels-${id}`);
+  if (!el) return;
+  try {
+    const data = await api('GET', `/api/contacts/${id}/relationships`);
+    const connTypes = ['introduced_by', 'peer', 'mentor', 'referred_funder'];
+    const connections = data.filter(r => connTypes.includes(r.type));
+    const pending = data.filter(r =>
+      r.type === 'wants_to_connect' && r.status === 'pending' && r.to_contact_warmth !== 'hot'
+    );
+    if (!connections.length && !pending.length) {
+      el.innerHTML = `<div class="detail-empty">No relationships recorded yet.</div>`;
+      return;
+    }
+    let html = '';
+    if (connections.length) {
+      html += `<div class="detail-sub-label">Connections</div>`;
+      html += connections.map(r => {
+        const other = r.from_contact_id === id ? esc(r.to_contact_name) : esc(r.from_contact_name);
+        return `<div class="detail-item">
+          ${_relBadge(r.type)}
+          <span>${other}</span>
+          ${r.notes ? `<span style="color:var(--text2)">${esc(r.notes)}</span>` : ''}
+        </div>`;
+      }).join('');
+    }
+    if (pending.length) {
+      html += `<div class="detail-sub-label">Pending intros</div>`;
+      html += pending.map(r => {
+        const other = r.from_contact_id === id ? esc(r.to_contact_name) : esc(r.from_contact_name);
+        return `<div class="detail-item">
+          ${_relBadge('wants_to_connect')}
+          <span>${other}</span>
+          <span class="badge badge-${r.to_contact_warmth}">${r.to_contact_warmth}</span>
+          ${r.notes ? `<span style="color:var(--text2)">${esc(r.notes)}</span>` : ''}
+        </div>`;
+      }).join('');
+    }
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = `<div class="detail-empty" style="color:var(--danger)">Error loading relationships</div>`;
+  }
 }
 
 // ── funders ───────────────────────────────────────────────────────────────────

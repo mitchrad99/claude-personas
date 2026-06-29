@@ -131,6 +131,60 @@ def update_contact(cid):
         session.close()
 
 
+@app.route('/api/contacts/<int:cid>/interactions', methods=['GET'])
+def contact_interactions(cid):
+    session = get_session()
+    try:
+        if not session.query(Contact).filter_by(id=cid).first():
+            return bad('not found', 404)
+        items = (session.query(Interaction)
+                 .filter(Interaction.contact_id == cid)
+                 .order_by(Interaction.date.desc())
+                 .all())
+        return jsonify([i.to_dict() for i in items])
+    finally:
+        session.close()
+
+
+@app.route('/api/contacts/<int:cid>/notes', methods=['GET'])
+def contact_notes_for_contact(cid):
+    session = get_session()
+    try:
+        if not session.query(Contact).filter_by(id=cid).first():
+            return bad('not found', 404)
+        notes = (session.query(ContactNote)
+                 .filter(ContactNote.contact_id == cid)
+                 .order_by(ContactNote.created_at.desc())
+                 .all())
+        return jsonify([n.to_dict() for n in notes])
+    finally:
+        session.close()
+
+
+@app.route('/api/contacts/<int:cid>/relationships', methods=['GET'])
+def contact_relationships_for_contact(cid):
+    session = get_session()
+    try:
+        if not session.query(Contact).filter_by(id=cid).first():
+            return bad('not found', 404)
+        rels = (session.query(ContactRelationship)
+                .filter(
+                    (ContactRelationship.from_contact_id == cid) |
+                    (ContactRelationship.to_contact_id == cid)
+                )
+                .order_by(ContactRelationship.created_at.desc())
+                .all())
+        result = []
+        for r in rels:
+            d = r.to_dict()
+            # Frontend needs to_contact's warmth to apply pending-intro display rule
+            d['to_contact_warmth'] = r.to_contact.warmth if r.to_contact else None
+            result.append(d)
+        return jsonify(result)
+    finally:
+        session.close()
+
+
 # ── funders ───────────────────────────────────────────────────────────────────
 
 @app.route('/api/funders', methods=['GET'])
