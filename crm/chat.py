@@ -1,6 +1,5 @@
 import os
 import json
-import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -285,18 +284,6 @@ def _parse_date(s: str) -> date:
     raise ValueError(f"Cannot parse date '{s}' — use YYYY-MM-DD format")
 
 
-_FUTURE_MEETING_RE = re.compile(
-    r"\b(i'?m?\s+(am\s+)?meeting|i\s+have\s+a\s+(meeting|call|lunch|coffee)|"
-    r"i'?m?\s+having\s+a\s+(meeting|call|lunch|coffee))\b",
-    re.IGNORECASE,
-)
-_PAST_SIGNAL_RE = re.compile(
-    r"\b(met\s+with|talked\s+to|spoke\s+with|had\s+a\s+(meeting|call)|"
-    r"he\s+said|she\s+said|they\s+said|we\s+discussed|mentioned|offered|agreed|debrief)\b",
-    re.IGNORECASE,
-)
-
-
 class ChatEngine:
     def __init__(self):
         self.client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
@@ -350,26 +337,8 @@ class ChatEngine:
 
     # ── main entry point ──────────────────────────────────────────────────────
 
-    def _is_future_meeting_mention(self, message: str) -> bool:
-        if '?' in message:
-            return False
-        if not _FUTURE_MEETING_RE.search(message):
-            return False
-        if _PAST_SIGNAL_RE.search(message):
-            return False
-        return True
-
     def chat(self, user_message: str):
         self._changes = []
-        _fmm = self._is_future_meeting_mention(user_message)
-        print(f"[DEBUG] user_message={user_message!r}", flush=True)
-        print(f"[DEBUG] _is_future_meeting_mention={_fmm}", flush=True)
-        if _fmm:
-            self.history.append({"role": "user", "content": user_message})
-            ack = "Got it — let me know how it goes."
-            self.history.append({"role": "assistant", "content": ack})
-            self._save_history()
-            return ack, self._changes
         self.history.append({"role": "user", "content": user_message})
         messages = self._build_messages()
 
