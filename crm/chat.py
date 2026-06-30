@@ -1,36 +1,50 @@
 import os
 import json
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import anthropic
+from sqlalchemy import or_
 
 from models import get_session, Contact, Funder, Task, DCOrg, Opportunity, Interaction, ContactNote, ContactRelationship
 
 HISTORY_FILE = Path(__file__).parent / 'chat_history.json'
 MAX_TURNS = 20   # number of recent turns to keep in context; older turns are summarized
 
-SYSTEM_PROMPT = (
-    "You are Mitch Radakovich's chief of staff and CRM assistant. "
-    "Mitch is Board Chair of All Aboard Ohio (AAO), a nonpartisan 501(c)3 passenger rail "
-    "advocacy organization. He is preparing for a 3-month DC sabbatical (fall 2026) focused "
-    "on fundraising, policy advocacy, and exploring a full-time advocacy career. "
-    "Your job: update contact records after Mitch describes a meeting, create follow-up tasks "
-    "with due dates, draft outreach emails, surface who needs follow-up. "
-    "When Mitch describes a meeting, extract: contact name + org (update or create record), "
-    "warmth signal, any dollar amounts (link to funders table), next steps (create tasks with "
-    "specific due dates), key topics (add to notes). "
-    "Always confirm what you've updated before offering to do more. "
-    "For every meeting or call debrief, always call log_interaction to create the touchpoint "
-    "record AND add_contact_note (source=chat_debrief) to capture key discussion points and "
-    "next steps as a persistent note on the contact. "
-    "When the user mentions that someone introduced them to another person, call log_relationship "
-    "with type=introduced_by and status=completed. "
-    "When the user mentions that someone offered or promised to make an introduction, call "
-    "log_relationship with type=wants_to_connect and status=pending, then also create a "
-    "follow-up task for Mitch to follow up on the pending connection. "
-    "Tone: direct, efficient, like a great EA. No fluff."
-)
+def _build_system_prompt() -> str:
+    today = date.today().isoformat()
+    return (
+        f"Today's date is {today}.\n\n"
+        "You are Mitch Radakovich's CRM assistant — sharp, efficient, precise. Mitch is Board Chair "
+        "of All Aboard Ohio (AAO), a 501(c)3 passenger rail advocacy org, preparing for a DC sabbatical "
+        "(fall 2026) focused on fundraising, policy advocacy, and exploring a full-time advocacy career.\n\n"
+        "**Core job**: After Mitch debriefs a past meeting or call, extract the contact, warmth signal, "
+        "discussion topics, dollar amounts, and next steps — then log everything accurately. For every "
+        "debrief, always call both `log_interaction` (touchpoint record) and `add_contact_note` "
+        "(source=chat_debrief) to capture key points as a persistent note. "
+        "A mention of a future or upcoming meeting is not a debrief — do not log it, do not ask for "
+        "its goal or agenda, and do not offer to prep for it. Acknowledge only.\n\n"
+        "**New contacts**: If a contact is mentioned by first name only and no existing record is found, "
+        "ask for their last name before creating. When `create_or_update_contact` returns `{duplicate: true}`, "
+        "use the existing contact's id — do not create a new record. When it returns "
+        "`{possible_duplicates: [...]}`, pause and confirm with the user before proceeding.\n\n"
+        "**Introductions**: When someone made an introduction, call `log_relationship` with "
+        "type=introduced_by and status=completed. When someone offered to make one, ask for the other "
+        "person's name and org first — use type=wants_to_connect and status=pending, then create a "
+        "follow-up task.\n\n"
+        "**Tool use**: Collect all required fields in the same turn before calling a tool — never call "
+        "a tool and then ask for missing info in a follow-up.\n\n"
+        "**Written drafts**: Only produce emails or written content when explicitly asked — never offer proactively.\n\n"
+        "**After responding**: Confirm what was logged in one or two sentences, then stop — no offers, "
+        "no suggestions, no questions. Informational statements are not requests for help. "
+        "Only suggest or ask for anything additional when the user's message explicitly requests it.\n"
+        "  • DON'T — User: 'I'm meeting with Ryan James Wednesday at 5pm.' "
+        "→ You: 'What's the goal of the meeting?' or 'Want me to create a prep task?'\n"
+        "  • DO — User: 'I'm meeting with Ryan James Wednesday at 5pm.' → You: 'Got it — let me know how it goes.'\n\n"
+        f"**Dates**: All date fields must use YYYY-MM-DD (e.g. {today}). Resolve relative terms to actual dates before passing to tools.\n\n"
+        "**Errors**: Describe what went wrong in plain English — never show raw error output."
+    )
 
 TOOLS = [
     {
@@ -247,6 +261,42 @@ TOOLS = [
 ]
 
 
+def _parse_date(s: str) -> date:
+    """Parse a date string flexibly, resolving 'today'/'yesterday' and common formats."""
+    if not s:
+        raise ValueError("Date string is empty")
+    s = s.strip()
+    lower = s.lower()
+    if lower == 'today':
+        return date.today()
+    if lower == 'yesterday':
+        return date.today() - timedelta(days=1)
+    # Try ISO format (YYYY-MM-DD) first
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        pass
+    # Try common English formats
+    for fmt in ('%B %d, %Y', '%b %d, %Y', '%m/%d/%Y', '%m-%d-%Y'):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            pass
+    raise ValueError(f"Cannot parse date '{s}' — use YYYY-MM-DD format")
+
+
+_FUTURE_MEETING_RE = re.compile(
+    r"\b(i'?m?\s+(am\s+)?meeting|i\s+have\s+a\s+(meeting|call|lunch|coffee)|"
+    r"i'?m?\s+having\s+a\s+(meeting|call|lunch|coffee))\b",
+    re.IGNORECASE,
+)
+_PAST_SIGNAL_RE = re.compile(
+    r"\b(met\s+with|talked\s+to|spoke\s+with|had\s+a\s+(meeting|call)|"
+    r"he\s+said|she\s+said|they\s+said|we\s+discussed|mentioned|offered|agreed|debrief)\b",
+    re.IGNORECASE,
+)
+
+
 class ChatEngine:
     def __init__(self):
         self.client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
@@ -266,8 +316,15 @@ class ChatEngine:
 
     def _save_history(self):
         HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.history = self.history[-MAX_TURNS * 2:]
         with open(HISTORY_FILE, 'w') as f:
-            json.dump(self.history[-MAX_TURNS * 2:], f, indent=2)
+            json.dump(self.history, f, indent=2)
+
+    def reset(self):
+        self.history = []
+        self._changes = []
+        if HISTORY_FILE.exists():
+            HISTORY_FILE.unlink()
 
     def _build_messages(self):
         """
@@ -293,8 +350,26 @@ class ChatEngine:
 
     # ── main entry point ──────────────────────────────────────────────────────
 
+    def _is_future_meeting_mention(self, message: str) -> bool:
+        if '?' in message:
+            return False
+        if not _FUTURE_MEETING_RE.search(message):
+            return False
+        if _PAST_SIGNAL_RE.search(message):
+            return False
+        return True
+
     def chat(self, user_message: str):
         self._changes = []
+        _fmm = self._is_future_meeting_mention(user_message)
+        print(f"[DEBUG] user_message={user_message!r}", flush=True)
+        print(f"[DEBUG] _is_future_meeting_mention={_fmm}", flush=True)
+        if _fmm:
+            self.history.append({"role": "user", "content": user_message})
+            ack = "Got it — let me know how it goes."
+            self.history.append({"role": "assistant", "content": ack})
+            self._save_history()
+            return ack, self._changes
         self.history.append({"role": "user", "content": user_message})
         messages = self._build_messages()
 
@@ -302,7 +377,8 @@ class ChatEngine:
             response = self.client.messages.create(
                 model='claude-sonnet-4-6',
                 max_tokens=4096,
-                system=SYSTEM_PROMPT,
+                temperature=0,
+                system=_build_system_prompt(),
                 tools=TOOLS,
                 messages=messages,
             )
@@ -399,6 +475,32 @@ class ChatEngine:
                 else:
                     if not name:
                         return {'error': 'name is required to create a contact'}
+
+                    email = inp.get('email')
+
+                    # Exact email match
+                    if email:
+                        existing = session.query(Contact).filter(Contact.email.ilike(email)).first()
+                        if existing:
+                            return {
+                                'duplicate': True,
+                                'existing_contact': existing.to_dict(),
+                                'message': 'A contact with this email already exists',
+                            }
+
+                    # Fuzzy name match (only when no email provided)
+                    if not email:
+                        tokens = [t for t in name.split() if len(t) > 1]
+                        if tokens:
+                            candidates = (session.query(Contact)
+                                          .filter(or_(*[Contact.name.ilike(f'%{t}%') for t in tokens]))
+                                          .limit(5).all())
+                            if candidates:
+                                return {
+                                    'possible_duplicates': [c.to_dict() for c in candidates],
+                                    'message': 'Similar contacts found — confirm before creating',
+                                }
+
                     c = Contact()
                     session.add(c)
                     action = 'created'
@@ -408,7 +510,7 @@ class ChatEngine:
                     setattr(c, field, inp[field])
 
             if inp.get('last_contact_date'):
-                c.last_contact_date = date.fromisoformat(inp['last_contact_date'])
+                c.last_contact_date = _parse_date(inp['last_contact_date'])
 
             if 'notes' in inp and inp['notes']:
                 if inp.get('append_notes') and c.notes:
@@ -437,7 +539,7 @@ class ChatEngine:
                 linked_funder_id=inp.get('linked_funder_id'),
             )
             if inp.get('due_date'):
-                t.due_date = date.fromisoformat(inp['due_date'])
+                t.due_date = _parse_date(inp['due_date'])
             session.add(t)
             session.commit()
             self._changes.append({'type': 'task', 'action': 'created', 'id': t.id, 'title': t.title})
@@ -488,7 +590,7 @@ class ChatEngine:
                     setattr(f, field, inp[field])
 
             if inp.get('deadline'):
-                f.deadline = date.fromisoformat(inp['deadline'])
+                f.deadline = _parse_date(inp['deadline'])
 
             if 'notes' in inp and inp['notes']:
                 if inp.get('append_notes') and f.notes:
@@ -541,7 +643,7 @@ class ChatEngine:
                 notes=inp.get('notes'),
             )
             if inp.get('deadline'):
-                o.deadline = date.fromisoformat(inp['deadline'])
+                o.deadline = _parse_date(inp['deadline'])
             session.add(o)
             session.commit()
             self._changes.append({'type': 'opportunity', 'action': 'created', 'id': o.id, 'title': o.title})
@@ -615,7 +717,7 @@ class ChatEngine:
         try:
             i = Interaction(
                 contact_id=inp['contact_id'],
-                date=date.fromisoformat(inp['date']),
+                date=_parse_date(inp['date']),
                 type=inp['type'],
                 notes=inp['notes'],
                 location=inp.get('location'),
