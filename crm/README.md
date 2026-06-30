@@ -304,7 +304,7 @@ Natural-language interface to the CRM. Type a meeting debrief in plain English (
 - Create a follow-up task with a specific due date
 - Create or update a funder record if a dollar amount is mentioned
 
-The chat engine (`chat.py`) maintains a rolling history (last 20 turns) in `chat_history.json`. History beyond 20 turns is summarized in a stub message. The model is `claude-sonnet-4-6` with tool use.
+The chat engine (`chat.py`) maintains a rolling history (last 20 turns) in `chat_history.json`. History beyond 20 turns is summarized in a stub message. The model is `claude-sonnet-4-6` with tool use. A "New conversation" button (↺) in the chat input bar calls `POST /api/chat/reset`, which clears both the in-memory history and `chat_history.json`, and resets the displayed messages to the initial greeting.
 
 **Meeting debrief behavior:** When Mitch describes a meeting or call, the engine always calls `log_interaction` (to record the touchpoint) and `add_contact_note` (source=`chat_debrief`) in addition to updating the contact record. When Mitch mentions that someone introduced them to another person, the engine calls `log_relationship` with `type=introduced_by` and `status=completed`. When someone promises a future introduction, the engine calls `log_relationship` with `type=wants_to_connect` and `status=pending`, then also creates a follow-up task.
 
@@ -396,6 +396,7 @@ All endpoints require HTTP Basic Auth. All responses are JSON.
 | POST | `/api/opportunities` | Create opportunity (`title` required) |
 | GET | `/api/summary` | Dashboard stats + `pending_inbox` count |
 | POST | `/api/chat` | Send message to Claude chat engine |
+| POST | `/api/chat/reset` | Clear conversation history (in-memory + `chat_history.json`) |
 | GET | `/api/inbox` | List pending inbox recommendations |
 | POST | `/api/inbox/<id>/accept` | Accept recommendation → creates Contact or Task |
 | POST | `/api/inbox/<id>/dismiss` | Dismiss recommendation |

@@ -188,6 +188,12 @@
       white-space: nowrap;
     }
     #chat-send:disabled { opacity: .5; cursor: default; }
+    #chat-new {
+      height: 42px;
+      padding: 0 12px;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
     .typing-indicator { color: var(--text2); font-size: .85rem; font-style: italic; padding: 4px 0; }
 
     /* ── data panes ── */
@@ -405,6 +411,7 @@
     <div class="chat-input-bar">
       <textarea id="chat-input" placeholder="Describe a meeting or ask anything…" rows="1"></textarea>
       <button id="chat-send" class="btn btn-primary">Send</button>
+      <button id="chat-new" class="btn btn-ghost" title="New conversation">↺</button>
     </div>
   </div>
 
@@ -660,6 +667,16 @@ chatInput.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
 chatSend.addEventListener('click', sendChat);
+document.getElementById('chat-new').addEventListener('click', resetChat);
+
+async function resetChat() {
+  try { await api('POST', '/api/chat/reset', {}); } catch(e) { /* best-effort */ }
+  chatMessages.innerHTML = `
+    <div class="msg assistant">
+      Hi Mitch. Describe a meeting, ask about your contacts or tasks, or ask me to draft an email.
+      <div class="msg-meta">Now</div>
+    </div>`;
+}
 
 function fmt(iso) {
   const d = new Date(iso);

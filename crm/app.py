@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from flask import Flask, jsonify, request, render_template
 from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import or_
 
 from models import init_db, get_session, Contact, Funder, Task, DCOrg, Opportunity, InboxRecommendation, Interaction, ContactNote, ContactRelationship, TaskRecommendation
 
@@ -93,11 +94,37 @@ def create_contact():
         data = request.json or {}
         if not data.get('name'):
             return bad('name is required')
+
+        email = data.get('email')
+
+        # 1. Exact email match
+        if email:
+            existing = session.query(Contact).filter(Contact.email.ilike(email)).first()
+            if existing:
+                return jsonify({
+                    'duplicate': True,
+                    'existing_contact': existing.to_dict(),
+                    'message': 'A contact with this email already exists',
+                }), 409
+
+        # 2. Fuzzy name match (only when no email provided)
+        if not email:
+            tokens = [t for t in data['name'].split() if len(t) > 1]
+            if tokens:
+                candidates = (session.query(Contact)
+                              .filter(or_(*[Contact.name.ilike(f'%{t}%') for t in tokens]))
+                              .limit(5).all())
+                if candidates:
+                    return jsonify({
+                        'possible_duplicates': [c.to_dict() for c in candidates],
+                        'message': 'Similar contacts found — confirm before creating',
+                    })
+
         c = Contact(
             name=data['name'],
             organization=data.get('organization'),
             title=data.get('title'),
-            email=data.get('email'),
+            email=email,
             phone=data.get('phone'),
             warmth=data.get('warmth', 'cold'),
             category=data.get('category', 'other'),
@@ -419,6 +446,12 @@ def chat():
         return bad('message is required')
     response, changes = get_chat_engine().chat(message)
     return jsonify({'response': response, 'changes': changes})
+
+
+@app.route('/api/chat/reset', methods=['POST'])
+def chat_reset():
+    get_chat_engine().reset()
+    return jsonify({'ok': True})
 
 
 # ── inbox ─────────────────────────────────────────────────────────────────────
