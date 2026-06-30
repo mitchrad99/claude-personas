@@ -834,6 +834,7 @@ function toggleContactExpand(row, id) {
       <div class="form-actions">
         <button class="btn btn-primary btn-sm" onclick="saveContact(${id})">Save</button>
         <button class="btn btn-ghost btn-sm" onclick="this.closest('.expand-row').previousElementSibling.click()">Cancel</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteContact(${id})">Delete</button>
       </div>
       <div class="detail-section">
         <div class="detail-label">Interactions</div>
@@ -869,6 +870,15 @@ async function saveContact(id) {
       notes: document.getElementById('ec-notes').value,
     });
     loadContacts();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function deleteContact(id) {
+  if (!confirm('Are you sure you want to delete this contact?')) return;
+  try {
+    await api('DELETE', `/api/contacts/${id}`);
+    loadContacts();
+    loadSummary();
   } catch(e) { alert('Error: ' + e.message); }
 }
 

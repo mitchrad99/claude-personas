@@ -158,6 +158,20 @@ def update_contact(cid):
         session.close()
 
 
+@app.route('/api/contacts/<int:cid>', methods=['DELETE'])
+def delete_contact(cid):
+    session = get_session()
+    try:
+        c = session.query(Contact).filter_by(id=cid).first()
+        if not c:
+            return bad('not found', 404)
+        session.delete(c)
+        session.commit()
+        return jsonify({'ok': True})
+    finally:
+        session.close()
+
+
 @app.route('/api/contacts/<int:cid>/interactions', methods=['GET'])
 def contact_interactions(cid):
     session = get_session()
