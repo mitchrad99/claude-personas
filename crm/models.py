@@ -10,8 +10,13 @@ TEST_MODE = os.environ.get('TEST_MODE', '').lower() in ('1', 'true', 'yes')
 if TEST_MODE:
     DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'local_test.db')}"
 else:
-    _db_default = f"sqlite:///{os.path.join(BASE_DIR, 'aao_crm.db')}"
-    DATABASE_URL = os.environ.get('DATABASE_URL', _db_default)
+    _raw = os.environ.get('DATABASE_URL')
+    if not _raw:
+        raise RuntimeError(
+            "DATABASE_URL is not set and TEST_MODE is not enabled — "
+            "refusing to start against an undefined database"
+        )
+    DATABASE_URL = _raw
     # Render (and legacy Heroku) inject postgres:// which SQLAlchemy 1.4+ rejects
     if DATABASE_URL.startswith('postgres://'):
         DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
@@ -40,7 +45,7 @@ class Contact(Base):
     email = Column(String(255))
     phone = Column(String(50))
     warmth = Column(String(10), default='cold')       # cold, warm, hot
-    category = Column(String(20), default='other')    # advocacy, funder, government, media, peer_org, dc_network, other
+    category = Column(String(20), default='other')    # advocacy, funder, government, media, peer_org, dc_network, mentor, other
     last_contact_date = Column(Date)
     notes = Column(Text)
     last_email_date = Column(DateTime)
