@@ -458,6 +458,24 @@ python3 app.py
 # Username: admin  Password: localpass
 ```
 
+### Running tests
+
+```bash
+source crm/venv/bin/activate
+pip install -r crm/requirements-dev.txt   # first time only
+
+cd crm
+pytest                          # run all tests
+pytest -v                       # verbose — shows each test name
+pytest --cov=. --cov-report=term-missing   # with line coverage
+pytest tests/test_models.py     # single file
+```
+
+Tests use an in-memory SQLite database — no Supabase connection, no API keys,
+no external calls. The conftest.py sets `DATABASE_URL=sqlite:///:memory:` and
+patches the SQLAlchemy engine before importing the app, so the test run is
+fully self-contained. All external APIs (Anthropic, Slack) are mocked.
+
 Local dev uses SQLite (`crm/aao_crm.db`). No `DATABASE_URL` env var needed. The database file is gitignored.
 
 The Gmail sync scripts (`gmail_sync.py`, `inbox_scan.py`) do not run locally unless you also set `SUPABASE_URL` and `GMAIL_TOKEN_JSON`. To run them locally against production Supabase, set those vars and run from the repo root:

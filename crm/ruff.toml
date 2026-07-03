@@ -1,0 +1,4 @@
+[lint]
+# Only flag actual bugs, not style — keeps CI green on existing code
+select = ["E9", "F63", "F7", "F82"]
+exclude = ["venv", "migrations"]
