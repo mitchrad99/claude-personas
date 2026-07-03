@@ -26,7 +26,7 @@ A personal relationship management tool for Mitch Radakovich, board chair of [Al
 ```
 crm/
 ├── app.py                   # Flask routes and all API endpoints
-├── models.py                # SQLAlchemy ORM — 10 tables, dual SQLite/Postgres support
+├── models.py                # SQLAlchemy ORM — 11 tables, dual SQLite/Postgres support
 ├── chat.py                  # Claude Sonnet chat engine with CRM tool use
 ├── gmail_sync.py            # Updates contact email fields from Gmail (scheduled)
 ├── inbox_scan.py            # AI-powered inbox scan for unknown senders (scheduled)
@@ -48,7 +48,8 @@ crm/
 │   ├── add_contact_notes.sql          # Creates contact_notes table
 │   ├── add_contact_relationships.sql  # Creates contact_relationships table
 │   ├── add_task_recommendations.sql   # Creates task_recommendations table
-│   └── add_slack_user_id.sql          # Adds slack_user_id column to contacts
+│   ├── add_slack_user_id.sql          # Adds slack_user_id column to contacts
+│   └── add_processed_gmail_messages.sql  # Creates processed_gmail_message_ids table
 └── templates/
     └── index.html           # Single-page app (~1200 lines, vanilla JS, no framework)
 ```
@@ -213,6 +214,16 @@ Social graph edges between contacts. Tracks introductions made, promised, or pen
 
 Constraints: `CHECK (from_contact_id != to_contact_id)` and `UNIQUE (from_contact_id, to_contact_id, type)`. Indexed on both FK columns.
 
+### `processed_gmail_message_ids`
+
+Deduplication log for Gmail messages already evaluated by the task triage phase of inbox_scan.py. Prevents re-evaluating the same message on subsequent runs regardless of outcome.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | integer PK | |
+| `message_id` | string(255) NOT NULL UNIQUE | Gmail message ID (e.g., `18a9c2d3e4f5`) |
+| `processed_at` | datetime | When the evaluation ran |
+
 ### `task_recommendations`
 
 AI-generated task suggestions pending human review. Distinct from `inbox_recommendations` (which is tied to unknown email senders) — task recommendations can come from any source (Gmail context, Slack, manual AI suggestions). Stays in this table until accepted or dismissed.
@@ -353,27 +364,34 @@ Two-section review queue for AI-generated items. The tab badge counts total pend
 
 ### `inbox_scan.py` — AI inbox scan
 
-**What it does:** Scans Gmail inbox for senders not already in the contacts table (and not already pending in inbox_recommendations). For each unknown sender, calls Claude Haiku to evaluate whether to recommend a `new_contact`, `new_task`, or `skip`. Saves non-skip recommendations to `inbox_recommendations` as `pending` rows for human review in the Inbox tab.
+**What it does:** Two-phase scan per run:
+
+1. **Unknown sender evaluation** — Scans Gmail inbox for senders not in the contacts table. For each unknown sender, calls Claude Haiku to evaluate whether to recommend a `new_contact`, `new_task`, or `skip`. Saves non-skip results to `inbox_recommendations` as `pending` rows.
+
+2. **Task triage for known contacts** — After the unknown-sender phase, scans recent inbound inbox messages from contacts already in the CRM. For each, calls Claude Haiku to evaluate whether the email contains a request, commitment, deadline, or follow-up signal that warrants a task. Creates `task_recommendation` rows with `source='gmail'`, the email subject as `source_context`, and `linked_contact_id` set. Evaluated message IDs are written to `processed_gmail_message_ids` to prevent re-evaluation on future runs.
 
 **Frequency:** Every 6 hours via GitHub Actions, immediately after gmail_sync.py.
 
-**Cost:** At most 20 Anthropic API calls per run, ~$0.001 each → **≤ $0.02 per run**, ≤ $0.08/day. Prints estimated cost at the end of each run.
+**Cost:** At most 30 Anthropic API calls per run, ~$0.001 each → **≤ $0.03 per run**, ≤ $0.12/day. Prints estimated cost at the end of each run.
+
+**AI call budget:** Unmatched sender evaluation takes priority up to 20 calls; task triage gets the remaining budget (up to 10 calls if sender evaluation used its full 20).
 
 **Scan window:** Uses `MAX(inbox_recommendations.created_at)` as the look-back date. On first run (no rows yet), defaults to 30 days ago.
 
-**Filters before AI evaluation:**
+**Filters before unknown-sender AI evaluation:**
 1. Skip senders matching automated patterns: `noreply`, `no-reply`, `donotreply`, `notification`, `newsletter`, `mailer-daemon`, `bounce@`, `bounces@`, `unsubscribe`, `automated`, `postmaster@`, `alerts@`, `updates@`.
 2. Skip senders whose email is already in the contacts table.
 3. Skip senders already in inbox_recommendations with status=`pending` (avoids duplicates across runs).
 
-**Cap:** If more than 20 candidates remain after filtering, only the 20 most recent are evaluated. Logs "cap reached — older senders deferred."
+**Task triage deduplication:** Message IDs already in `processed_gmail_message_ids` are skipped entirely. One candidate per sender per run (most recent unprocessed message). All evaluated messages are marked as processed regardless of outcome (signal found, no signal, or error).
 
-**AI prompt:** `claude-haiku-4-5-20251001` is given the sender name, address, subject, date, and snippet. It returns JSON only (schema enforced in system prompt): `recommendation_type`, `summary`, and `suggested_fields`. Markdown code fences are stripped from the response before JSON parsing in case the model adds them.
+**AI prompt:** `claude-haiku-4-5-20251001` is given the sender name, address, subject, date, and snippet. Markdown code fences are stripped from the response before JSON parsing in case the model adds them.
 
 **Failure modes:**
 - Missing env vars → immediate `sys.exit` before imports.
-- Gmail fetch failure → `sys.exit`.
-- Per-sender Anthropic API error → logs error, continues (does not abort run).
+- Gmail fetch failure for unknown senders → `sys.exit`.
+- Gmail fetch failure for task triage → logs warning, skips task triage (does not abort run).
+- Per-sender or per-message Anthropic API error → logs error, continues (does not abort run).
 - JSON parse failure from Haiku → same as API error — logs and continues.
 - DB commit failure → rolls back and `sys.exit`.
 
@@ -481,7 +499,7 @@ no external calls. The conftest.py sets `DATABASE_URL=sqlite:///:memory:` and
 patches the SQLAlchemy engine before importing the app, so the test run is
 fully self-contained. All external APIs (Anthropic, Slack) are mocked.
 
-Local dev uses SQLite (`crm/aao_crm.db`). No `DATABASE_URL` env var needed. The database file is gitignored.
+For local dev, use `TEST_MODE=true` (see Test mode section below). Without it, `DATABASE_URL` must be set or the app raises `RuntimeError` at startup.
 
 The Gmail sync scripts (`gmail_sync.py`, `inbox_scan.py`) do not run locally unless you also set `SUPABASE_URL` and `GMAIL_TOKEN_JSON`. To run them locally against production Supabase, set those vars and run from the repo root:
 
@@ -558,7 +576,7 @@ Only needed if you're setting up Gmail sync for the first time or refreshing aft
 
 ## Key design decisions
 
-**SQLite locally, Postgres in production.** `models.py` reads `DATABASE_URL` from env, defaulting to a local SQLite file. `check_same_thread=False` is only passed for SQLite. The `postgres://` → `postgresql://` prefix fix runs at import time because Render (like legacy Heroku) injects the old format that SQLAlchemy 1.4+ rejects.
+**SQLite locally, Postgres in production.** `models.py` reads `DATABASE_URL` from env. If `TEST_MODE=true`, it uses a local SQLite file (`local_test.db`) instead. If `TEST_MODE` is not set and `DATABASE_URL` is missing, the app raises `RuntimeError` at import time — no silent fallback. `check_same_thread=False` is only passed for SQLite. The `postgres://` → `postgresql://` prefix fix runs at import time because Render (like legacy Heroku) injects the old format that SQLAlchemy 1.4+ rejects.
 
 **`CRM_PASSWORD` raises at startup if missing.** Rather than silently falling back to a default password or returning 500 errors later, the app raises `RuntimeError` immediately at import. This surfaces the missing secret in Render's deploy logs within seconds.
 
@@ -566,7 +584,7 @@ Only needed if you're setting up Gmail sync for the first time or refreshing aft
 
 **Chat engine lazy-loads.** `ChatEngine` (which imports `anthropic`) is instantiated on first `/api/chat` request, not at startup. This lets the Flask app start successfully on Render even if `ANTHROPIC_API_KEY` isn't set yet, so the other tabs work while the key is being configured.
 
-**Inbox scan caps at 20 AI calls per run.** Haiku is cheap but not free. The cap prevents a surprise bill if the inbox suddenly has hundreds of unknown senders (e.g., after a conference). Older candidates are deferred to the next run because the scan window advances after each run.
+**Inbox scan caps at 30 AI calls per run total.** Haiku is cheap but not free. Unknown-sender evaluation takes priority up to 20 calls; task triage for known contacts gets the remainder. The cap prevents a surprise bill if the inbox suddenly has hundreds of messages. Older candidates are deferred to the next run because the scan window advances after each run.
 
 **UTC everywhere, 'Z' suffix in JS.** Python returns naive UTC datetimes as ISO strings without a timezone suffix. The frontend appends `'Z'` before parsing so browsers treat them as UTC instead of local time — otherwise a "3 days ago" label could be wrong depending on the user's timezone.
 
