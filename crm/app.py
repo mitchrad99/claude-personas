@@ -11,6 +11,8 @@ from models import init_db, get_session, Contact, Funder, Task, DCOrg, Opportuni
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
 
+_TEST_MODE = os.environ.get('TEST_MODE', '').lower() in ('1', 'true', 'yes')
+
 auth = HTTPBasicAuth()
 
 _CRM_USERNAME = os.environ.get('CRM_USERNAME', 'admin')
@@ -54,7 +56,7 @@ def _parse_date(s):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', test_mode=_TEST_MODE)
 
 
 # ── contacts ─────────────────────────────────────────────────────────────────
