@@ -10,6 +10,7 @@ from models import get_session, Contact, Funder, Task, DCOrg, Opportunity, Inter
 
 HISTORY_FILE = Path(__file__).parent / 'chat_history.json'
 MAX_TURNS = 20   # number of recent turns to keep in context; older turns are summarized
+_TEST_MODE = os.environ.get('TEST_MODE', '').lower() in ('1', 'true', 'yes')
 
 def _build_system_prompt() -> str:
     today = date.today().isoformat()
@@ -290,7 +291,8 @@ def _parse_date(s: str) -> date:
 
 class ChatEngine:
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
+        if not _TEST_MODE:
+            self.client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
         self.history = self._load_history()
         self._changes = []
 
@@ -343,6 +345,12 @@ class ChatEngine:
 
     def chat(self, user_message: str):
         self._changes = []
+        if _TEST_MODE:
+            return (
+                "[TEST MODE] Chat is mocked — no Anthropic API calls are made. "
+                f'Your message: "{user_message}"\n\n'
+                "In production this would be processed by Claude Sonnet 4.6 with full CRM tool access."
+            ), []
         self.history.append({"role": "user", "content": user_message})
         messages = self._build_messages()
 

@@ -25,6 +25,12 @@ from datetime import datetime, timedelta
 
 # ── Validate env vars before any heavy imports ────────────────────────────────
 
+if os.environ.get('TEST_MODE', '').lower() in ('1', 'true', 'yes'):
+    sys.exit(
+        "TEST_MODE is enabled — gmail_sync.py does not run against the local test database.\n"
+        "Unset TEST_MODE to sync against production Supabase."
+    )
+
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '').strip()
 GMAIL_TOKEN_B64 = os.environ.get('GMAIL_TOKEN_JSON', '').strip()
 

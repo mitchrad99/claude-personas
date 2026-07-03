@@ -379,9 +379,29 @@
     /* ── inbox section headers ── */
     .inbox-section-label { font-size: .8rem; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; padding: 8px 0 6px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
     .inbox-empty-state { color: var(--text2); font-size: .84rem; padding: 6px 0; }
+
+    /* ── test-mode banner ── */
+    #test-mode-banner {
+      background: #b45309;
+      color: #fff;
+      text-align: center;
+      padding: 5px 16px;
+      font-size: .8rem;
+      font-weight: 700;
+      letter-spacing: .05em;
+      position: sticky;
+      top: 0;
+      z-index: 200;
+    }
+    body.test-mode header { top: 30px; }
+    body.test-mode nav { top: calc(30px + 49px); }
   </style>
 </head>
-<body>
+<body{% if test_mode %} class="test-mode"{% endif %}>
+
+{% if test_mode %}
+<div id="test-mode-banner">TEST MODE — local data only</div>
+{% endif %}
 
 <header>
   <h1>AAO CRM</h1>

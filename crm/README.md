@@ -36,6 +36,10 @@ crm/
 ├── requirements.txt
 ├── Procfile                 # web: gunicorn app:app
 ├── runtime.txt              # python-3.11.0
+├── scripts/
+│   ├── seed_test_db.py          # Seed local_test.db with fake data (TEST_MODE dev)
+│   ├── merge_contacts.py        # One-off deduplication helper
+│   └── match_slack_users.py     # One-off Slack user ID matcher
 ├── migrations/
 │   ├── add_email_sync_fields.sql      # Adds last_email_* columns to contacts
 │   ├── add_inbox_recommendations.sql  # Creates inbox_recommendations table
@@ -427,6 +431,7 @@ All endpoints require HTTP Basic Auth. All responses are JSON.
 | `CRM_USERNAME` | No | HTTP Basic Auth username (default: `admin`) |
 | `SECRET_KEY` | No | Flask session secret — generate with `openssl rand -base64 32` |
 | `ANTHROPIC_API_KEY` | For chat tab | Anthropic API key; chat tab errors gracefully if missing |
+| `TEST_MODE` | No | Set to `true` to use `crm/local_test.db` instead of Supabase (local dev only) |
 
 ### GitHub Actions secrets
 
@@ -483,6 +488,40 @@ The Gmail sync scripts (`gmail_sync.py`, `inbox_scan.py`) do not run locally unl
 ```bash
 SUPABASE_URL=postgresql://... GMAIL_TOKEN_JSON=... python3 crm/gmail_sync.py
 ```
+
+### Test mode (local throwaway database)
+
+`TEST_MODE=true` runs the app against a local SQLite file (`crm/local_test.db`) instead of `DATABASE_URL` / Supabase. It is safe to use on your laptop with no risk of touching production data.
+
+**First-time setup:**
+
+```bash
+source crm/venv/bin/activate
+cd crm
+
+# Create and seed the test database with fake contacts, funders, tasks, etc.
+TEST_MODE=true python scripts/seed_test_db.py
+
+# Start the app against the test database
+TEST_MODE=true CRM_PASSWORD=localpass python app.py
+# → http://localhost:5000  (username: admin, password: localpass)
+```
+
+Re-running `seed_test_db.py` drops all tables and recreates them — safe to do any time you want a clean slate.
+
+**What changes in TEST_MODE:**
+
+| Feature | Behavior |
+|---|---|
+| Database | `crm/local_test.db` (SQLite) instead of `DATABASE_URL` / Supabase |
+| UI | Amber "TEST MODE — local data only" banner at the top of every page |
+| Chat | Returns a mocked response — no Anthropic API calls, no key required |
+| `gmail_sync.py` | Refuses to run: prints a clear error and exits |
+| `slack_sync.py` | Refuses to run: prints a clear error and exits |
+
+Nothing changes when `TEST_MODE` is unset or `false` — production runs exactly as today.
+
+**`local_test.db` is gitignored** and will never be committed.
 
 ### Gmail OAuth setup (one-time)
 

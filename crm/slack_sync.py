@@ -37,6 +37,12 @@ from datetime import datetime, timedelta, timezone
 
 # ── Validate env vars early ───────────────────────────────────────────────────
 
+if os.environ.get('TEST_MODE', '').lower() in ('1', 'true', 'yes'):
+    sys.exit(
+        "TEST_MODE is enabled — slack_sync.py does not run against the local test database.\n"
+        "Unset TEST_MODE to sync against production Supabase."
+    )
+
 SUPABASE_URL      = os.environ.get('SUPABASE_URL', '').strip()
 SLACK_BOT_TOKEN   = os.environ.get('SLACK_BOT_TOKEN', '').strip()
 SLACK_USER_ID     = os.environ.get('SLACK_USER_ID', '').strip()
