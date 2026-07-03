@@ -330,6 +330,14 @@ class ContactRelationship(Base):
         }
 
 
+class ProcessedGmailMessage(Base):
+    __tablename__ = 'processed_gmail_message_ids'
+
+    id           = Column(Integer, primary_key=True)
+    message_id   = Column(String(255), nullable=False, unique=True)
+    processed_at = Column(DateTime, default=datetime.utcnow)
+
+
 class TaskRecommendation(Base):
     __tablename__ = 'task_recommendations'
 

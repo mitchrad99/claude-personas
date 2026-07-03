@@ -22,7 +22,7 @@ import json
 import re
 import time
 import email.utils
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 # ── Validate env vars early ───────────────────────────────────────────────────
 
@@ -52,13 +52,14 @@ from googleapiclient.discovery import build
 import anthropic as anthropic_sdk
 from sqlalchemy import func
 
-from models import get_session, Contact, InboxRecommendation
+from models import get_session, Contact, InboxRecommendation, TaskRecommendation, ProcessedGmailMessage
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-SCOPES           = ['https://www.googleapis.com/auth/gmail.readonly']
-MAX_AI_CALLS     = 20
-AI_COST_PER_CALL = 0.001   # rough Haiku estimate
+SCOPES             = ['https://www.googleapis.com/auth/gmail.readonly']
+MAX_AI_CALLS       = 20    # cap for unmatched-sender evaluation
+MAX_TOTAL_AI_CALLS = 30    # combined cap (unmatched senders + task triage)
+AI_COST_PER_CALL   = 0.001 # rough Haiku estimate
 
 # Sender address patterns to skip — automated/noreply senders
 SKIP_PATTERNS = [
@@ -204,6 +205,102 @@ def evaluate_sender(client, sender):
     raw = re.sub(r'\s*```$', '', raw)
     return json.loads(raw)
 
+TASK_TRIAGE_PROMPT = """\
+You are helping Mitch Radakovich, board chair of All Aboard Ohio (a nonprofit \
+passenger rail advocacy organization), manage his professional network during a \
+three-month DC advocacy sabbatical.
+
+An inbound email from a known contact is shown below. Evaluate whether it \
+contains an action signal: a request, commitment, deadline, event, follow-up \
+prompt, or introduction offer that warrants creating a task for Mitch.
+
+Return JSON only — no markdown, no text outside the JSON. Schema:
+{
+  "has_task_signal": true | false,
+  "summary": "<one sentence: what needs action, or why no action needed>",
+  "suggested_task": {
+    "title": "<short imperative phrase, e.g. \\"Follow up with Jane about proposal\\">",
+    "description": "<one or two sentences of context>",
+    "priority": "low | medium | high",
+    "due_date": "<YYYY-MM-DD or null>"
+  }
+}
+Only include "suggested_task" when has_task_signal is true."""
+
+
+def scan_inbox_for_task_triage(service, my_email, since_dt, known_emails, processed_ids):
+    """
+    Returns list of {message_id, from_email, from_name, subject, snippet, date}
+    for the most recent unprocessed inbound message per known contact in the window.
+    List is in newest-first order (Gmail API returns messages newest-first).
+    """
+    query = f'in:inbox after:{since_dt.strftime("%Y/%m/%d")}'
+    result = service.users().messages().list(
+        userId='me', q=query, maxResults=100
+    ).execute()
+
+    candidates = []
+    seen_senders = set()
+
+    for stub in result.get('messages', []):
+        msg_id = stub['id']
+        if msg_id in processed_ids:
+            continue
+
+        msg = service.users().messages().get(
+            userId='me',
+            id=msg_id,
+            format='metadata',
+            metadataHeaders=['From', 'Subject'],
+        ).execute()
+
+        headers = {h['name'].lower(): h['value'] for h in msg['payload']['headers']}
+        name, addr = parse_from(headers.get('from', ''))
+
+        if not addr or addr == my_email or is_automated(addr):
+            continue
+        if addr not in known_emails:
+            continue
+        if addr in seen_senders:
+            continue
+
+        seen_senders.add(addr)
+        candidates.append({
+            'message_id': msg_id,
+            'from_email':  addr,
+            'from_name':   name,
+            'subject':     headers.get('subject', '(no subject)'),
+            'snippet':     msg.get('snippet', '')[:200],
+            'date':        datetime.utcfromtimestamp(int(msg['internalDate']) / 1000),
+        })
+        time.sleep(0.1)
+
+    return candidates
+
+
+def evaluate_task_signal(client, msg, contact_name):
+    """
+    Calls Claude Haiku and returns the parsed JSON task-triage dict.
+    Raises on API error or JSON parse failure.
+    """
+    user_msg = (
+        f"From: {contact_name} <{msg['from_email']}>\n"
+        f"Subject: {msg['subject']}\n"
+        f"Date: {msg['date'].strftime('%Y-%m-%d')}\n"
+        f"Snippet: {msg['snippet']}"
+    )
+    resp = client.messages.create(
+        model='claude-haiku-4-5-20251001',
+        max_tokens=300,
+        system=TASK_TRIAGE_PROMPT,
+        messages=[{'role': 'user', 'content': user_msg}],
+    )
+    raw = resp.content[0].text.strip()
+    raw = re.sub(r'^```(?:json)?\s*', '', raw)
+    raw = re.sub(r'\s*```$', '', raw)
+    return json.loads(raw)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -215,14 +312,20 @@ def main():
 
     session = get_session()
     try:
-        known_emails = {
-            row[0].lower()
-            for row in session.query(Contact.email).filter(Contact.email.isnot(None)).all()
+        email_to_contact = {
+            row[0].lower(): {'id': row[1], 'name': row[2]}
+            for row in session.query(Contact.email, Contact.id, Contact.name)
+                              .filter(Contact.email.isnot(None)).all()
         }
+        known_emails = set(email_to_contact.keys())
         pending_emails = {
             row[0].lower()
             for row in session.query(InboxRecommendation.sender_email)
                                .filter_by(status='pending').all()
+        }
+        processed_ids = {
+            row[0]
+            for row in session.query(ProcessedGmailMessage.message_id).all()
         }
         last_scan = session.query(func.max(InboxRecommendation.created_at)).scalar()
     except Exception as e:
@@ -298,6 +401,81 @@ def main():
         print(f"    {rec_type} — {summary[:80]}")
         time.sleep(0.3)
 
+    # ── Task triage for known contacts ────────────────────────────────────────
+    task_budget = max(0, MAX_TOTAL_AI_CALLS - len(candidates))
+    print(f"\nTask triage budget: {task_budget} call(s)")
+
+    task_candidates = []
+    if task_budget > 0:
+        print("Scanning for task signals in emails from known contacts...")
+        try:
+            task_candidates = scan_inbox_for_task_triage(
+                service, my_email, since, known_emails, processed_ids
+            )
+        except Exception as e:
+            print(f"  WARNING: Gmail scan for task triage failed: {e}")
+
+        if len(task_candidates) > task_budget:
+            task_candidates = task_candidates[:task_budget]
+            print(f"  (capped at {task_budget})")
+
+    print(f"Task triage candidates: {len(task_candidates)}\n")
+
+    tasks_created = task_triage_skipped = task_triage_errors = 0
+    new_processed_ids = []
+
+    for i, msg in enumerate(task_candidates, 1):
+        contact_info = email_to_contact.get(msg['from_email'], {})
+        contact_id   = contact_info.get('id')
+        contact_name = contact_info.get('name', msg['from_email'])
+        print(f"  [{i}/{len(task_candidates)}] {contact_name} — {msg['subject'][:50]}")
+
+        try:
+            rec = evaluate_task_signal(ai_client, msg, contact_name)
+        except Exception as e:
+            task_triage_errors += 1
+            print(f"    ERROR: {e}")
+            new_processed_ids.append(msg['message_id'])
+            time.sleep(1)
+            continue
+
+        new_processed_ids.append(msg['message_id'])
+
+        if not rec.get('has_task_signal'):
+            task_triage_skipped += 1
+            print(f"    no signal — {rec.get('summary', '')[:80]}")
+            time.sleep(0.3)
+            continue
+
+        suggested = rec.get('suggested_task', {})
+        due_date  = None
+        due_str   = suggested.get('due_date')
+        if due_str:
+            try:
+                due_date = date.fromisoformat(due_str)
+            except (ValueError, AttributeError):
+                pass
+
+        task_rec = TaskRecommendation(
+            title             = suggested.get('title', 'Follow up (from email)')[:255],
+            description       = suggested.get('description', ''),
+            due_date          = due_date,
+            priority          = suggested.get('priority', 'medium'),
+            linked_contact_id = contact_id,
+            category          = 'outreach',
+            source            = 'gmail',
+            source_context    = msg['subject'][:500],
+            ai_summary        = rec.get('summary', ''),
+            status            = 'pending',
+        )
+        session.add(task_rec)
+        tasks_created += 1
+        print(f"    task — {rec.get('summary', '')[:80]}")
+        time.sleep(0.3)
+
+    for mid in new_processed_ids:
+        session.add(ProcessedGmailMessage(message_id=mid))
+
     try:
         session.commit()
     except Exception as e:
@@ -306,16 +484,21 @@ def main():
     finally:
         session.close()
 
-    est_cost = len(candidates) * AI_COST_PER_CALL
+    total_ai_calls = len(candidates) + len(task_candidates)
+    est_cost = total_ai_calls * AI_COST_PER_CALL
     print(f"\n=== Inbox scan complete ===")
     print(f"  Emails scanned     : {len(by_sender)}")
     print(f"  Candidates for AI  : {len(candidates)}")
     print(f"  Saved as pending   : {saved}")
     print(f"  Skipped by AI      : {skipped_by_ai}")
     print(f"  AI errors          : {ai_errors}")
+    print(f"  Task triage        : {len(task_candidates)} evaluated, "
+          f"{tasks_created} created, {task_triage_skipped} no signal, "
+          f"{task_triage_errors} error(s)")
+    print(f"  Total AI calls     : {total_ai_calls}")
     print(f"  Est. cost          : ${est_cost:.3f}")
     if cap_reached:
-        print(f"  Cap reached        : yes (max {MAX_AI_CALLS}/run)")
+        print(f"  Cap reached        : yes (max {MAX_AI_CALLS} unmatched / {MAX_TOTAL_AI_CALLS} total)")
 
 
 if __name__ == '__main__':
