@@ -498,6 +498,25 @@ Only needed if you're setting up Gmail sync for the first time or refreshing aft
 
 ---
 
+## Security
+
+**Never hardcode credentials.** All secrets are passed via environment variables — never committed to the repo. This is enforced at two layers:
+
+- **Pre-commit hook:** `gitleaks` scans staged changes before every commit and blocks the commit if it finds anything secret-shaped. To install:
+  ```bash
+  brew install pre-commit   # one-time
+  pre-commit install        # run from repo root — activates the hook for this clone
+  ```
+  The hook is configured in `.pre-commit-config.yaml` and runs gitleaks v8.30.1.
+
+- **CI check:** Every push and PR runs gitleaks against the diff in the `Secret Scan` job. A failing secret scan blocks merge.
+
+**What's gitignored:** `.env`, `.env.*`, `credentials.json`, `token.json`, `*.key`, `*.pem`. Never add exceptions for these.
+
+**Adding a new secret:** Add it to `.env.example` with a placeholder value and document it in the Environment variables table above. Never put the real value in any committed file.
+
+---
+
 ## Key design decisions
 
 **SQLite locally, Postgres in production.** `models.py` reads `DATABASE_URL` from env, defaulting to a local SQLite file. `check_same_thread=False` is only passed for SQLite. The `postgres://` → `postgresql://` prefix fix runs at import time because Render (like legacy Heroku) injects the old format that SQLAlchemy 1.4+ rejects.
