@@ -458,6 +458,7 @@
           <option value="media">Media</option>
           <option value="peer_org">Peer Org</option>
           <option value="dc_network">DC Network</option>
+          <option value="mentor">Mentor</option>
           <option value="other">Other</option>
         </select>
       </div>
@@ -840,7 +841,7 @@ function toggleContactExpand(row, id) {
         </div>
         <div class="form-field"><label>Category</label>
           <select id="ec-category">
-            ${['advocacy','funder','government','media','peer_org','dc_network','other'].map(v =>
+            ${['advocacy','funder','government','media','peer_org','dc_network','mentor','other'].map(v =>
               `<option value="${v}" ${c.category===v?'selected':''}>${v}</option>`
             ).join('')}
           </select>
@@ -1175,6 +1176,7 @@ const modalForms = {
             <option value="media">Media</option>
             <option value="peer_org">Peer Org</option>
             <option value="dc_network">DC Network</option>
+            <option value="mentor">Mentor</option>
             <option value="other">Other</option>
           </select>
         </div>
@@ -1467,7 +1469,7 @@ function inboxCardHtml(r) {
 }
 
 function _contactFieldsHtml(id, f) {
-  const cats = ['advocacy','funder','government','media','peer_org','dc_network','other'];
+  const cats = ['advocacy','funder','government','media','peer_org','dc_network','mentor','other'];
   return `
   <div class="form-grid">
     <div class="form-field"><label>Name</label><input id="if-${id}-name" value="${esc(f.name||'')}"></div>

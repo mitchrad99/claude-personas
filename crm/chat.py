@@ -29,10 +29,18 @@ def _build_system_prompt() -> str:
         "ask for their last name before creating. When `create_or_update_contact` returns `{duplicate: true}`, "
         "use the existing contact's id — do not create a new record. When it returns "
         "`{possible_duplicates: [...]}`, pause and confirm with the user before proceeding.\n\n"
-        "**Introductions**: When someone made an introduction, call `log_relationship` with "
-        "type=introduced_by and status=completed. When someone offered to make one, ask for the other "
-        "person's name and org first — use type=wants_to_connect and status=pending, then create a "
-        "follow-up task.\n\n"
+        "**Relationship language — two distinct cases**:\n"
+        "  (1) Relationship between two other contacts (e.g. 'John introduced me to Sarah,' 'Dave and Lisa "
+        "are peers at another rail org') → call `log_relationship`. This never modifies either contact's own fields.\n"
+        "  (2) How a contact relates to Mitch specifically (e.g. 'Becky is mentoring me,' 'she's been "
+        "advising me during the sabbatical') → do NOT call `log_relationship`. Reflect it as a `category` "
+        "value on that contact's own record (e.g. category=mentor). If no existing category fits, flag it "
+        "rather than guessing. Never touch `title`, `organization`, or other descriptive fields as a side "
+        "effect of a relationship statement — only update those when Mitch explicitly states a factual "
+        "correction about that field (e.g. 'her title is now X' or 'she works at Y now').\n"
+        "For introductions: completed → type=introduced_by, status=completed; offered but not yet made → "
+        "ask for the other person's name and org first, use type=wants_to_connect, status=pending, then "
+        "create a follow-up task.\n\n"
         "**Tool use**: Collect all required fields in the same turn before calling a tool — never call "
         "a tool and then ask for missing info in a follow-up.\n\n"
         "**Written drafts**: Only produce emails or written content when explicitly asked — never offer proactively.\n\n"
@@ -84,7 +92,7 @@ TOOLS = [
                 "phone": {"type": "string"},
                 "warmth": {"type": "string", "enum": ["cold", "warm", "hot"]},
                 "category": {"type": "string", "enum": [
-                    "advocacy", "funder", "government", "media", "peer_org", "dc_network", "other"
+                    "advocacy", "funder", "government", "media", "peer_org", "dc_network", "mentor", "other"
                 ]},
                 "last_contact_date": {"type": "string", "description": "ISO date YYYY-MM-DD"},
                 "notes": {"type": "string"},

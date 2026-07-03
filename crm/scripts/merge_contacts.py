@@ -7,7 +7,7 @@ Scan for duplicates:
 Merge two records (keep_id wins, delete_id is removed):
     python crm/scripts/merge_contacts.py <keep_id> <delete_id>
 
-Set DATABASE_URL to target production; defaults to local SQLite.
+Set DATABASE_URL to target production, or set TEST_MODE=1 to run against local_test.db.
 """
 
 import sys
