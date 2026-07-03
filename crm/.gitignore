@@ -3,6 +3,10 @@ chat_history.json
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
 credentials.json
 token.json
+*.key
+*.pem
 venv/

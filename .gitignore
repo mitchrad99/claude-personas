@@ -1,9 +1,18 @@
 # Keep persona data local — contains real conversation history
 personas/*.json
 
-# Never commit API keys
+# Never commit secrets
 .env
+.env.*
+!.env.example
 *.env
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+token.json
+service_account*.json
 
 # Mac clutter
 .DS_Store
