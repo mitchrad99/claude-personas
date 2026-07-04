@@ -18,6 +18,7 @@ Run locally:
 import os
 import sys
 import base64
+import difflib
 import json
 import re
 import time
@@ -135,6 +136,49 @@ def parse_from(from_header):
     addr = addr.lower().strip()
     name = name.strip() or addr.split('@')[0]
     return name, addr
+
+# ── Fuzzy name matching ───────────────────────────────────────────────────────
+
+FUZZY_NAME_THRESHOLD = 0.80
+
+def _normalize_name(name):
+    """Lowercase and strip middle initials (single letters with optional period)."""
+    name = name.lower()
+    name = re.sub(r'\b[a-z]\.?\s+', '', name)
+    return ' '.join(name.split())
+
+
+def fuzzy_name_match(sender_name, all_contacts):
+    """
+    Return (contact_id, score) for the best name match if score >= threshold.
+
+    all_contacts: list of dicts with keys 'id' and 'name'.
+    Returns (None, 0.0) when no match clears the threshold.
+
+    Conservative threshold (0.80) avoids false positives from shared first
+    names while catching middle-initial variants like 'Derrick L. James'
+    matching 'Derrick James'.
+    """
+    norm_sender = _normalize_name(sender_name)
+    if not norm_sender:
+        return None, 0.0
+
+    best_id    = None
+    best_score = 0.0
+
+    for contact in all_contacts:
+        norm_contact = _normalize_name(contact['name'])
+        if not norm_contact:
+            continue
+        score = difflib.SequenceMatcher(None, norm_sender, norm_contact).ratio()
+        if score > best_score:
+            best_score = score
+            best_id    = contact['id']
+
+    if best_score >= FUZZY_NAME_THRESHOLD:
+        return best_id, round(best_score, 4)
+    return None, 0.0
+
 
 # ── Gmail scan ────────────────────────────────────────────────────────────────
 
@@ -318,6 +362,10 @@ def main():
                               .filter(Contact.email.isnot(None)).all()
         }
         known_emails = set(email_to_contact.keys())
+        all_contacts = [
+            {'id': row[0], 'name': row[1]}
+            for row in session.query(Contact.id, Contact.name).all()
+        ]
         pending_emails = {
             row[0].lower()
             for row in session.query(InboxRecommendation.sender_email)
@@ -385,6 +433,12 @@ def main():
             time.sleep(0.3)
             continue
 
+        matched_id, confidence = (None, 0.0)
+        if rec_type == 'new_contact':
+            matched_id, confidence = fuzzy_name_match(sender['name'], all_contacts)
+            if matched_id:
+                print(f"    fuzzy match → contact_id={matched_id} (confidence={confidence:.2f})")
+
         row = InboxRecommendation(
             sender_name            = sender['name'],
             sender_email           = sender['email'],
@@ -395,6 +449,8 @@ def main():
             recommendation_json    = json.dumps(rec.get('suggested_fields', {})),
             recommendation_summary = summary,
             status                 = 'pending',
+            possible_contact_id    = matched_id or None,
+            match_confidence       = confidence if matched_id else None,
         )
         session.add(row)
         saved += 1

@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Text, Date, DateTime, Boolean, ForeignKey, CheckConstraint, UniqueConstraint
+from sqlalchemy import create_engine, Column, Integer, Float, String, Text, Date, DateTime, Boolean, ForeignKey, CheckConstraint, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 
@@ -197,7 +197,11 @@ class InboxRecommendation(Base):
     recommendation_json    = Column(Text)          # suggested_fields as JSON
     recommendation_summary = Column(Text)
     status                 = Column(String(20), default='pending')  # pending/accepted/dismissed
+    possible_contact_id    = Column(Integer, ForeignKey('contacts.id'), nullable=True)
+    match_confidence       = Column(Float, nullable=True)
     created_at             = Column(DateTime, default=datetime.utcnow)
+
+    possible_contact = relationship('Contact', foreign_keys=[possible_contact_id])
 
     def to_dict(self):
         return {
@@ -211,6 +215,9 @@ class InboxRecommendation(Base):
             'recommendation_json':    self.recommendation_json,
             'recommendation_summary': self.recommendation_summary,
             'status':                 self.status,
+            'possible_contact_id':    self.possible_contact_id,
+            'possible_contact_name':  self.possible_contact.name if self.possible_contact else None,
+            'match_confidence':       self.match_confidence,
             'created_at':             self.created_at.isoformat() if self.created_at else None,
         }
 

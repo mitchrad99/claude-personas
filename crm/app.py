@@ -523,6 +523,36 @@ def accept_inbox(rid):
         session.close()
 
 
+@app.route('/api/inbox/<int:rid>/link', methods=['POST'])
+def link_inbox_to_contact(rid):
+    session = get_session()
+    try:
+        rec = session.query(InboxRecommendation).filter_by(id=rid, status='pending').first()
+        if not rec:
+            return bad('not found or already processed', 404)
+        if not rec.possible_contact_id:
+            return bad('no possible_contact_id on this recommendation', 400)
+
+        contact = session.query(Contact).filter_by(id=rec.possible_contact_id).first()
+        if not contact:
+            return bad('matched contact not found', 404)
+
+        fields = json.loads(rec.recommendation_json) if rec.recommendation_json else {}
+
+        # Merge: fill in empty fields only, never overwrite existing data
+        for attr, key in [('title', 'title'), ('organization', 'organization'),
+                          ('email', 'email'), ('notes', 'notes')]:
+            if not getattr(contact, attr) and fields.get(key):
+                setattr(contact, attr, fields[key])
+        contact.updated_at = datetime.utcnow()
+
+        rec.status = 'accepted'
+        session.commit()
+        return jsonify({'ok': True, 'contact': contact.to_dict()})
+    finally:
+        session.close()
+
+
 @app.route('/api/inbox/<int:rid>/dismiss', methods=['POST'])
 def dismiss_inbox(rid):
     session = get_session()

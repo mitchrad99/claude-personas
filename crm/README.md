@@ -49,7 +49,8 @@ crm/
 │   ├── add_contact_relationships.sql  # Creates contact_relationships table
 │   ├── add_task_recommendations.sql   # Creates task_recommendations table
 │   ├── add_slack_user_id.sql          # Adds slack_user_id column to contacts
-│   └── add_processed_gmail_messages.sql  # Creates processed_gmail_message_ids table
+│   ├── add_processed_gmail_messages.sql  # Creates processed_gmail_message_ids table
+│   └── add_inbox_fuzzy_match.sql     # Adds possible_contact_id, match_confidence to inbox_recommendations
 └── templates/
     └── index.html           # Single-page app (~1200 lines, vanilla JS, no framework)
 ```
@@ -165,6 +166,8 @@ AI-generated suggestions from inbox_scan.py. Each row represents an unknown send
 | `recommendation_json` | text | JSON string of Claude-suggested field values; pre-fills the Inbox form |
 | `recommendation_summary` | text | One-sentence explanation from Claude |
 | `status` | string(20) | `pending` \| `accepted` \| `dismissed` |
+| `possible_contact_id` | integer FK → contacts.id | Nullable — set when inbox_scan.py finds a fuzzy name match for a `new_contact` recommendation |
+| `match_confidence` | float | SequenceMatcher similarity score (0–1) for the fuzzy match; null when no match |
 | `created_at` | datetime | |
 
 ### `interactions`
@@ -329,9 +332,12 @@ Available tools (13): `get_contacts`, `create_or_update_contact`, `create_task`,
 
 Two-section review queue for AI-generated items. The tab badge counts total pending across both sections; `pending_inbox` in `/api/summary` includes both `inbox_recommendations` and `task_recommendations`.
 
-**New Contacts** — `inbox_recommendations` rows with `recommendation_type = new_contact` from inbox_scan.py. Each card shows sender name, email, email snippet, Claude's rationale, and pre-filled suggested fields editable before accepting.
-- **Accept** → creates a Contact row from the (edited) suggested fields
+**New Contacts** — `inbox_recommendations` rows with `recommendation_type = new_contact` from inbox_scan.py. Each card shows sender name, email, email snippet, Claude's rationale, and pre-filled suggested fields editable before accepting. When inbox_scan.py found a fuzzy name match for the sender (based on display name similarity against existing contact names), the card shows a "Possible match: Name" badge instead of "New contact" and offers three actions:
+- **Accept (create new)** → creates a fresh Contact row from the (edited) suggested fields
+- **Link to [name]** → merges new info into the matched contact (title, org, email, notes — only fills empty fields, never overwrites), marks recommendation `accepted`
 - **Dismiss** → marks `dismissed`
+
+When no fuzzy match was found, only Accept and Dismiss are shown.
 
 **Suggested Tasks** — `task_recommendations` rows. Each card shows the task title, linked contact (if any), source badge (Gmail / Slack), the triggering context snippet, Claude's one-sentence AI summary, and suggested due date. All fields are editable before accepting.
 - **Accept** → creates a Task row from the (edited) fields, preserves `linked_contact_id` and `linked_funder_id` from the recommendation
@@ -383,6 +389,8 @@ Two-section review queue for AI-generated items. The tab badge counts total pend
 2. Skip senders whose email is already in the contacts table.
 3. Skip senders already in inbox_recommendations with status=`pending` (avoids duplicates across runs).
 
+**Fuzzy name matching:** When Claude recommends `new_contact` for an unknown email address, inbox_scan.py runs a fuzzy name comparison between the sender's display name and all existing contact names using `difflib.SequenceMatcher`. Middle initials are stripped before comparison (e.g., "Derrick L. James" → "Derrick James"). If the best match scores ≥ 0.80, the recommendation row is written with `possible_contact_id` and `match_confidence` set so the Inbox UI can offer a "Link to existing" action instead of always creating a duplicate.
+
 **Task triage deduplication:** Message IDs already in `processed_gmail_message_ids` are skipped entirely. One candidate per sender per run (most recent unprocessed message). All evaluated messages are marked as processed regardless of outcome (signal found, no signal, or error).
 
 **AI prompt:** `claude-haiku-4-5-20251001` is given the sender name, address, subject, date, and snippet. Markdown code fences are stripped from the response before JSON parsing in case the model adds them.
@@ -421,6 +429,7 @@ All endpoints require HTTP Basic Auth. All responses are JSON.
 | POST | `/api/chat/reset` | Clear conversation history (in-memory + `chat_history.json`) |
 | GET | `/api/inbox` | List pending inbox recommendations |
 | POST | `/api/inbox/<id>/accept` | Accept recommendation → creates Contact or Task |
+| POST | `/api/inbox/<id>/link` | Link recommendation to matched contact: merges fields (no overwrite), marks `accepted`; requires `possible_contact_id` set on the row |
 | POST | `/api/inbox/<id>/dismiss` | Dismiss recommendation |
 | GET | `/api/interactions` | List interactions; filter by `?contact_id=`, `?type=`, `?follow_up_needed=` |
 | POST | `/api/interactions` | Create interaction (`contact_id` and `date` required) |

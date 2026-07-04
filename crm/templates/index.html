@@ -231,8 +231,9 @@
       transition: opacity .15s;
     }
     .btn:active { opacity: .75; }
-    .btn-primary { background: var(--accent); color: #fff; }
-    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+    .btn-primary   { background: var(--accent); color: #fff; }
+    .btn-secondary { background: var(--warm-bg); color: var(--warm); border: 1px solid var(--warm); }
+    .btn-ghost     { background: transparent; border: 1px solid var(--border); color: var(--text); }
     .btn-sm { padding: 4px 10px; font-size: .78rem; }
     .btn-danger { background: var(--danger); color: #fff; }
 
@@ -289,8 +290,9 @@
     @media (max-width: 640px) { .hide-sm { display: none; } }
 
     /* ── inbox cards ── */
-    .badge-new-contact { background: var(--accent-light); color: var(--accent); }
-    .badge-new-task    { background: var(--warm-bg);      color: var(--warm); }
+    .badge-new-contact   { background: var(--accent-light); color: var(--accent); }
+    .badge-new-task      { background: var(--warm-bg);      color: var(--warm); }
+    .badge-fuzzy-match   { background: var(--warm-bg);      color: var(--warm); }
     .inbox-list { padding: 12px 16px; display: flex; flex-direction: column; gap: 12px; }
     .inbox-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); box-shadow: var(--shadow); }
     .inbox-card-top { padding: 14px 16px 10px; }
@@ -1438,8 +1440,11 @@ function renderInboxTaskRecs() {
 function inboxCardHtml(r) {
   const fields  = r.recommendation_json ? JSON.parse(r.recommendation_json) : {};
   const isCx    = r.recommendation_type === 'new_contact';
+  const hasFuzzy = isCx && r.possible_contact_id;
   const badge   = isCx
-    ? '<span class="badge badge-new-contact">New contact</span>'
+    ? (hasFuzzy
+        ? `<span class="badge badge-fuzzy-match">Possible match: ${esc(r.possible_contact_name || '')}</span>`
+        : '<span class="badge badge-new-contact">New contact</span>')
     : '<span class="badge badge-new-task">New task</span>';
   const dateStr = r.email_date ? fmtDate(r.email_date.slice(0, 10)) : '';
 
@@ -1462,7 +1467,8 @@ function inboxCardHtml(r) {
       ${isCx ? _contactFieldsHtml(r.id, fields) : _taskFieldsHtml(r.id, fields)}
     </div>
     <div class="inbox-actions">
-      <button class="btn btn-primary btn-sm" onclick="acceptRec(${r.id})">Accept</button>
+      <button class="btn btn-primary btn-sm" onclick="acceptRec(${r.id})">Accept (create new)</button>
+      ${hasFuzzy ? `<button class="btn btn-secondary btn-sm" onclick="linkToExistingRec(${r.id})">Link to ${esc(r.possible_contact_name || 'existing contact')}</button>` : ''}
       <button class="btn btn-ghost btn-sm"   onclick="dismissRec(${r.id})">Dismiss</button>
     </div>
   </div>`;
@@ -1551,6 +1557,14 @@ async function dismissRec(id) {
   try {
     await api('POST', `/api/inbox/${id}/dismiss`, {});
     _removeCard(id);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function linkToExistingRec(id) {
+  try {
+    await api('POST', `/api/inbox/${id}/link`, {});
+    _removeCard(id);
+    loadSummary();
   } catch(e) { alert('Error: ' + e.message); }
 }
 
